@@ -12,14 +12,13 @@ import socket
 # Конфигурационные параметры
 FTP_HOST = ""  # Адрес FTP-сервера
 FTP_USER = ""  # Логин пользователя FTP
-FTP_PASS = ""  # Пароль пользователя FTP
+FTP_PASS = ""  # Пароль (небезопасно хранить в коде!)
 REMOTE_DIR = "/"  # Целевая директория на сервере
 LOCAL_DIR = "."  # Локальная директория для загрузки
 
 # Настройки исключений
 EXCLUDED_EXTENSIONS = " .lnk, .py , .rar"  # Расширения файлов для исключения
-EXCLUDED_FILES = r" "  # Исключаемые файлы относительно скрипта
-EXCLUDED_DIRS = r".git,.vscode.,cache"  # Исключаемые директории относительно скрипта # data , data/data
+EXCLUDED_FILES_DIRS = r" .git,.vscode.,cache "  # Исключаемые файлы и директории
 ENCODING = "cp1251"  # Кодировка ftp сервера для соединения
 
 MAX_RETRIES = 3  # Максимальное количество попыток подключения и загрузки
@@ -273,9 +272,6 @@ def validate_dirs(dirs):
     return valid_dirs
 
 
-import os
-
-
 def normalize_items(items, script_dir, local_dir):
     """
     Нормализует пути, обрабатывая многоточечную нотацию ('..', '...') и преобразуя их в относительные.
@@ -286,20 +282,31 @@ def normalize_items(items, script_dir, local_dir):
         script_dir (str): Директория, в которой выполняется скрипт.
         local_dir (str): Базовая директория, относительно которой вычисляются относительные пути.
     Returns:
-        list: Список нормализованных путей.
+        dict: Словарь с нормализованными путями для файлов и директорий.
     """
     if not items or items.isspace():
-        return []
-    result = []  # Список для хранения нормализованных путей.
+        return {
+            "files": [],
+            "dirs": [],
+        }  # Возвращаем пустые списки для файлов и директорий.
+
+    result = {
+        "files": [],
+        "dirs": [],
+    }  # Словарь для хранения нормализованных файлов и директорий.
+
     # Разделяем входную строку на отдельные пути, разделенные запятыми.
     for item in items.split(","):
         item = item.strip()  # Удаляем лишние пробелы в начале и конце пути.
+
         # Пропускаем пустые пути.
         if not item:
             continue
+
         try:
             # Разрешаем абсолютный путь, используя функцию resolve_path (предполагается, что она определена ранее).
             abs_path = resolve_path(item, script_dir)
+
             # Проверяем, находятся ли пути на одном и том же диске.
             if (
                 os.path.splitdrive(abs_path)[0].lower()
@@ -313,22 +320,27 @@ def normalize_items(items, script_dir, local_dir):
                 )
                 # Проверяем существование файла по абсолютному пути.
                 if os.path.exists(final_path):
-                    result.append(final_path)
+                    # Если путь существует, добавляем в список файлов или директорий в зависимости от типа.
+                    if os.path.isdir(final_path):
+                        result["dirs"].append(final_path)
+                    else:
+                        result["files"].append(final_path)
                 else:
                     log("ERROR", f"Путь не существует: {final_path}")
             else:
                 # Если путь на том же диске, вычисляем относительный путь.
                 rel_path = os.path.relpath(abs_path, local_dir)
                 normalized = rel_path.replace("\\", "/").lower()
-                # Обрабатываем специальные последовательности '..' и '...'.
+
+                # Обрабатываем специальные последовательности '..' и '...' (для перехода на уровни вверх).
                 parts = normalized.split("/")  # Разделяем путь на компоненты.
                 processed = []  # Список для хранения обработанных компонентов пути.
+
                 for part in parts:
                     if part == "..":  # Обработка перехода на уровень выше.
                         if processed:
                             processed.pop()  # Удаляем последний компонент из processed.
                         else:
-                            # Предупреждение, если '..' встречается в начале пути (попытка выйти за пределы корня).
                             log("WARNING", f"Некорректный переход выше корня: {item}")
                             break  # Прерываем обработку текущего пути.
                     elif part.startswith(
@@ -342,29 +354,33 @@ def normalize_items(items, script_dir, local_dir):
                         )
                     else:
                         processed.append(part)  # Добавляем компонент пути в processed.
+
                 # Собираем обработанный путь обратно в строку.
                 final_path = "/".join(processed)
                 # Проверяем, что final_path не пустой после обработки.
                 if final_path:
                     # Проверяем существование файла по нормализованному пути относительно local_dir.
-                    if os.path.exists(os.path.join(local_dir, final_path)):
-                        result.append(
-                            final_path
-                        )  # Добавляем путь в результат, если файл существует.
+                    full_path = os.path.join(local_dir, final_path)
+                    if os.path.exists(full_path):
+                        # Если файл существует, добавляем его в соответствующий список.
+                        if os.path.isdir(full_path):
+                            result["dirs"].append(final_path)
+                        else:
+                            result["files"].append(final_path)
                     else:
-                        # Ошибка, если файл не существует.
                         log("ERROR", f"Путь не существует: {final_path}")
                 else:
-                    # Предупреждение, если final_path стал пустым после обработки (некорректный путь).
                     log(
                         "WARNING",
                         f"Недопустимый путь: {item} (преобразован в пустую строку)",
                     )
+
         except ValueError as e:
-            # Обработка исключения, если возникла ошибка при обработке пути.
             log("WARNING", f"Ошибка обработки пути {item}: {e}")
 
-    return result  # Возвращаем список нормализованных путей.
+    return (
+        result  # Возвращаем словарь с нормализованными путями для файлов и директорий.
+    )
 
 
 def should_upload_file(file_path, local_dir, excluded_files, excluded_extensions):
@@ -503,7 +519,7 @@ def main():
 
     # Настройка логирования.  Указываем, какие типы сообщений выводить.
     # Раскомментируйте нужные строки для включения/отключения типов сообщений.
-    # LOG_SETTINGS['LEVELS']['DEBUG'] = True    # Отладочная информация
+    #LOG_SETTINGS["LEVELS"]["DEBUG"] = True  # Отладочная информация
     LOG_SETTINGS["LEVELS"]["INFO"] = True  # Информационные сообщения
     LOG_SETTINGS["LEVELS"]["WARNING"] = True  # Предупреждения
     LOG_SETTINGS["LEVELS"]["ERROR"] = True  # Ошибки
@@ -531,23 +547,20 @@ def main():
     excluded_extensions = [
         ext.strip().lower() for ext in EXCLUDED_EXTENSIONS.split(",") if ext.strip()
     ]
+
     # Список исключенных расширений файлов. Приводим к нижнему регистру и удаляем пробелы.
-    excluded_files = normalize_items(EXCLUDED_FILES, script_dir, local_dir)
-    # Список исключенных файлов. Используем функцию normalize_items для обработки путей.
-    excluded_dirs = normalize_items(EXCLUDED_DIRS, script_dir, local_dir)
-    # Список исключенных директорий.
-    excluded_dirs = validate_dirs(excluded_dirs)
+    EXCLUDED = normalize_items(EXCLUDED_FILES_DIRS, script_dir, local_dir)
+    excluded_files = EXCLUDED["files"]  # Список исключенных файлов.
+    excluded_dirs = EXCLUDED["dirs"]  # Список исключенных директорий.
     # Оптимизируем список исключенных директорий, удаляя вложенные.
 
     # Логирование для отладки. Выводим значения переменных для проверки.
     log("DEBUG", f"Директория скрипта: {script_dir}")
     log("DEBUG", f"Локальная директория: {local_dir}")
     log("DEBUG", f"Исключенные расширения: {excluded_extensions}")
-    log("DEBUG", f"Исходный список исключенных файлов: {EXCLUDED_FILES}")
-    log("DEBUG", f"Исключенные файлы после нормализации: {excluded_files}")
-    log("DEBUG", f"Исходный список исключенных директорий: {EXCLUDED_DIRS}")
+    log("DEBUG", f"Исходный список исключений: {EXCLUDED_FILES_DIRS}")
     log("DEBUG", f"Исключенные директории после нормализации: {excluded_dirs}")
-    log("DEBUG", f"Исключенные директории после валидации: {excluded_dirs}")
+    log("DEBUG", f"Исключенные файлы после валидации: {excluded_files}")
 
     # Проверка существования локальной директории.
     if not os.path.isdir(local_dir):
