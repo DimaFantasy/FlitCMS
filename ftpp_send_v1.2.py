@@ -12,13 +12,13 @@ import socket
 # Конфигурационные параметры
 FTP_HOST = ""  # Адрес FTP-сервера
 FTP_USER = ""  # Логин пользователя FTP
-FTP_PASS = ""  # Пароль (небезопасно хранить в коде!)
+FTP_PASS = ""  # Пароль пользователя FTP
 REMOTE_DIR = "/"  # Целевая директория на сервере
 LOCAL_DIR = "."  # Локальная директория для загрузки
 
 # Настройки исключений
 EXCLUDED_EXTENSIONS = " .lnk, .py , .rar"  # Расширения файлов для исключения
-EXCLUDED_FILES = r""  # Исключаемые файлы относительно скрипта
+EXCLUDED_FILES = r" "  # Исключаемые файлы относительно скрипта
 EXCLUDED_DIRS = r".git,.vscode.,cache"  # Исключаемые директории относительно скрипта # data , data/data
 ENCODING = "cp1251"  # Кодировка ftp сервера для соединения
 
@@ -404,7 +404,9 @@ def should_upload_file(file_path, local_dir, excluded_files, excluded_extensions
     return True
 
 
-def upload_with_progress(ftp, local_path, remote_path, filesize, retry_count=3):
+def upload_with_progress(
+    ftp, local_path, remote_path, filesize, retry_count=MAX_RETRIES
+):
     """
     Загружает файл с визуализацией прогресса и повторными попытками.
 
@@ -413,73 +415,67 @@ def upload_with_progress(ftp, local_path, remote_path, filesize, retry_count=3):
         local_path (str): Локальный путь к файлу
         remote_path (str): Целевой путь на сервере
         filesize (int): Размер файла в байтах
-        retry_count (int): Количество повторных попыток при ошибках
+        retry_count (int): Количество оставшихся попыток при ошибках
     Возвращает:
         bool: True при успешной загрузке
     """
-    pbar = None  # Инициализируем переменную для прогресс-бара
+    pbar = None
+
     try:
-        # Восстановление соединения при необходимости
-        if not ftp.sock:  # Проверяем, активно ли соединение
-            log(
-                "WARNING", "Переподключение к серверу..."
-            )  # Логируем предупреждение о переподключении
-            ftp.connect(FTP_HOST)  # Переподключаемся к FTP-серверу
-            ftp.login(FTP_USER, FTP_PASS)  # Авторизуемся на FTP-сервере
-        with open(
-            local_path, "rb"
-        ) as f:  # Открываем локальный файл для чтения в бинарном режиме
-            # Инициализация прогресс-бара для больших файлов
-            if (
-                filesize > 102400
-            ):  # Условие для создания прогресс-бара только для файлов больше 100 КБ
+        if not ftp.sock:
+            log("WARNING", "Переподключение к серверу...")
+            ftp.connect(FTP_HOST)
+            ftp.login(FTP_USER, FTP_PASS)
+
+        with open(local_path, "rb") as f:
+            if filesize > 102400:
+                log("SUCCESS", f"Загрузка {os.path.basename(local_path)} начата...")
+
                 pbar = tqdm(
                     total=filesize,
                     unit="B",
                     unit_scale=True,
                     desc=os.path.basename(remote_path),
-                )  # Создаем прогресс-бар
+                    position=0,
+                    leave=True,
+                    ncols=100,
+                    ascii=False,
+                )
 
             def update_progress(data):
-                """Callback для обновления прогресс-бара"""
-                if pbar:  # Проверяем, был ли создан прогресс-бар
-                    try:
-                        pbar.update(
-                            len(data)
-                        )  # Обновляем прогресс-бар на количество переданных байтов
-                    except (
-                        Exception
-                    ) as e:  # Обрабатываем возможные ошибки при обновлении прогресс-бара
-                        log(
-                            "ERROR", f"Ошибка обновления прогресса: {e}"
-                        )  # Логируем ошибку
+                """Callback для обновления прогресса"""
+                if pbar:
+                    pbar.update(len(data))
 
-            # Основной цикл загрузки
             try:
-                ftp.storbinary(
-                    f"STOR {remote_path}", f, callback=update_progress
-                )  # Загружаем файл на сервер с использованием callback для обновления прогресса
-                return True  # Возвращаем True в случае успешной загрузки
-            except ftplib.error_temp as e:  # Обрабатываем временные ошибки FTP
-                if MAX_RETRIES > 0:  # Проверяем количество оставшихся попыток
+                ftp.storbinary(f"STOR {remote_path}", f, callback=update_progress)
+                success = True
+            except ftplib.error_temp as e:
+                if retry_count > 0:
                     log(
-                        "WARNING", f"Повторная попытка ({MAX_RETRIES} осталось)..."
-                    )  # Логируем предупреждение о повторной попытке
-                    time.sleep(RETRY_DELAY)  # Задержка перед повторной попыткой
+                        "WARNING",
+                        f"Ошибка: {e}. Повторная попытка через {RETRY_DELAY} сек. ({retry_count} осталось)...",
+                    )
+                    time.sleep(RETRY_DELAY)
                     return upload_with_progress(
-                        ftp, local_path, remote_path, filesize, MAX_RETRIES - 1
-                    )  # Рекурсивно вызываем функцию для повторной загрузки
+                        ftp, local_path, remote_path, filesize, retry_count - 1
+                    )
                 else:
-                    log(
-                        "ERROR", "Превышено количество попыток"
-                    )  # Логируем ошибку о превышении количества попыток
-                    return False  # Возвращаем False в случае неудачи после всех попыток
-    except Exception as e:  # Обрабатываем критические ошибки
-        log("ERROR", f"Критическая ошибка: {str(e)}")  # Логируем критическую ошибку
-        return False  # Возвращаем False в случае критической ошибки
+                    log("ERROR", "Превышено количество попыток загрузки")
+                    success = False
+            except Exception as e:
+                log("ERROR", f"Критическая ошибка: {str(e)}")
+                success = False
     finally:
-        if pbar:  # Проверяем, был ли создан прогресс-бар
-            pbar.close()  # Закрываем прогресс-бар в любом случае (успех или ошибка)
+        if pbar:
+            pbar.close()
+
+        if success:
+            log(
+                "SUCCESS", f"Загрузка {os.path.basename(local_path)} завершена."
+            )  # Лог после закрытия pbar
+
+    return success
 
 
 # Функция для проверки существования файла на сервере
