@@ -18,7 +18,7 @@ LOCAL_DIR = "."  # Локальная директория для загрузк
 
 # Настройки исключений
 EXCLUDED_EXTENSIONS = " .lnk, .py , .rar"  # Расширения файлов для исключения
-EXCLUDED_FILES = r".gitignore"  # Исключаемые файлы относительно скрипта
+EXCLUDED_FILES = r""  # Исключаемые файлы относительно скрипта
 EXCLUDED_DIRS = r".git,.vscode.,cache"  # Исключаемые директории относительно скрипта # data , data/data
 ENCODING = "cp1251"  # Кодировка ftp сервера для соединения
 
