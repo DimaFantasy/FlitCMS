@@ -18,7 +18,9 @@ LOCAL_DIR = "."  # Локальная директория для загрузк
 
 # Настройки исключений
 EXCLUDED_EXTENSIONS = " .lnk, .py , .rar"  # Расширения файлов для исключения
-EXCLUDED_FILES_DIRS = r" .git,.vscode.,cache "  # Исключаемые файлы и директории
+EXCLUDED_FILES_DIRS = (
+    r" .git,.vscode.,cache, includes\temp "  # Исключаемые файлы и директории
+)
 ENCODING = "cp1251"  # Кодировка ftp сервера для соединения
 
 MAX_RETRIES = 3  # Максимальное количество попыток подключения и загрузки
@@ -519,7 +521,7 @@ def main():
 
     # Настройка логирования.  Указываем, какие типы сообщений выводить.
     # Раскомментируйте нужные строки для включения/отключения типов сообщений.
-    #LOG_SETTINGS["LEVELS"]["DEBUG"] = True  # Отладочная информация
+    # LOG_SETTINGS["LEVELS"]["DEBUG"] = True  # Отладочная информация
     LOG_SETTINGS["LEVELS"]["INFO"] = True  # Информационные сообщения
     LOG_SETTINGS["LEVELS"]["WARNING"] = True  # Предупреждения
     LOG_SETTINGS["LEVELS"]["ERROR"] = True  # Ошибки
@@ -591,12 +593,7 @@ def main():
         )  # Формируем путь на FTP-сервере.
         if remote_path == "/":
             remote_path = ""  # Избегаем двойного слеша в начале пути.
-        # Исключение директорий из списка исключений.
-        dirs[:] = [
-            d
-            for d in dirs
-            if not is_excluded_dir(os.path.join(rel_path, d), excluded_dirs)
-        ]  # Изменяем список dirs "на месте".
+        # Проверяем, является ли текущая директория исключенной.
         if is_excluded_dir(
             rel_path, excluded_dirs
         ):  # Проверяем, исключена ли текущая директория.
