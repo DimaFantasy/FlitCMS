@@ -156,7 +156,7 @@ function updateStats() {
 
     const startTime = Date.now();
 
-    fetch('/stats.php', { signal: abortController.signal })
+    fetch('stats.php', { signal: abortController.signal })
         .then(response => response.json())
         .then(data => {
             // Обновляем карточки
