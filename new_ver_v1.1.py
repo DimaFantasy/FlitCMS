@@ -14,7 +14,7 @@ from tqdm import tqdm # Без него коменты без цвета
 import glob
 
 # Глобальные константы
-JS_FILE_NAME = r' assets\js\main_v0.1.js, assets\css\styles_0.1.css ' # Файлы для обновления версии через запятую. Указать точный путь к файлу. 
+FILE_NAME = r' assets\js\main_v0.1.js, assets\css\styles_0.1.css ' # Файлы для обновления версии через запятую. Указать точный путь к файлу. 
 # Формат: <базовое_имя>X.Y.<расширение>, где X=1-5 цифр (версия), Y=1-2 цифры (подверсия)
 # Пример корректных имён: "main_v123.45.js", "data_V5.1.TXT", "APP_00001.02.js"
 # Регистр букв в имени сохраняется при обновлении версии, поиск регистронезависимый 
@@ -467,7 +467,7 @@ def main():
     if all_files:
         log('SUCCESS', f"Всего найдено файлов: {len(all_files)}")       
         # Разбиваем JS_FILE_NAME на список имен файлов и удаляем пробелы
-        js_file_names = process_path_list(JS_FILE_NAME, script_dir, root_dir)
+        js_file_names = process_path_list(FILE_NAME, script_dir, root_dir)
         for js_file_name in js_file_names:
             log('INFO', f"Начинаем смену версии для файла: {js_file_name}")            
             # Получаем абсолютный путь к файлу с учетом базовой директории скрипта
