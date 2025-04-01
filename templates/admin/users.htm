@@ -1,0 +1,434 @@
+{{php if ( !$user->isCurrentRole('Admin'))die('Access Denied'); }} 
+{{template header.htm}}
+
+<div class="container-fluid p-4">
+    <h2>{{t('Users')}}</h2>
+
+
+    <!-- Кнопка для добавления пользователя в рамке без тени -->
+    <div class="card rounded shadow-none mb-3">
+        <div class="card-body">
+            <button onclick="openAddModal()" class="btn btn-success">{{t('Add User')}}</button>
+        </div>
+    </div>
+
+
+    <div class="users-list" id="users-list">
+        <!-- Список пользователей будет загружен сюда через JavaScript -->
+    </div>
+
+</div>
+
+<!-- Модальное окно для добавления пользователя -->
+<div class="modal fade" id="addUserModal" tabindex="-1" aria-labelledby="addUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">{{t('Add User')}}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addUserForm">
+                    <div class="mb-3">
+                        <label for="addUserEmail" class="form-label">{{t('Email')}}</label>
+                        <input type="email" class="form-control" id="addUserEmail" name="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="addUserName" class="form-label">{{t('Name')}}</label>
+                        <input type="text" class="form-control" id="addUserName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="addUserPassword" class="form-label">{{t('Password')}}</label>
+                        <input type="password" class="form-control" id="addUserPassword" name="password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="addUserRole" class="form-label">{{t('Role')}}</label>
+                        <select class="form-select" id="addUserRole" name="role" required>
+                            <option value="admin">{{t('Admin')}}</option>
+                            <option value="user">{{t('User')}}</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{t('Close')}}</button>
+                <button type="button" class="btn btn-primary" onclick="addUser()">{{t('Add User')}}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для редактирования пользователя -->
+<div class="modal fade" id="editUserModal" tabindex="-1" aria-labelledby="editUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">{{t('Edit User')}}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editUserForm">
+                    <input type="hidden" id="editUserEmail" name="email">
+                    <div class="mb-3">
+                        <label for="editUserName" class="form-label">{{t('Name')}}</label>
+                        <input type="text" class="form-control" id="editUserName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editUserRole" class="form-label">{{t('Role')}}</label>
+                        <select class="form-select" id="editUserRole" name="role" required>
+                            <option value="admin">{{t('Admin')}}</option>
+                            <option value="user">{{t('User')}}</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{t('Close')}}</button>
+                <button type="button" class="btn btn-primary" onclick="saveUser()">{{t('Save')}}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для сброса пароля -->
+<div class="modal fade" id="resetPasswordModal" tabindex="-1" aria-labelledby="resetPasswordModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">{{t('Reset Password')}}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="resetPasswordForm">
+                    <input type="hidden" id="resetPasswordEmail" name="email">
+                    <div class="mb-3">
+                        <label for="newPassword" class="form-label">{{t('New Password')}}</label>
+                        <input type="password" class="form-control" id="newPassword" name="newPassword" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirmNewPassword" class="form-label">{{t('Confirm New Password')}}</label>
+                        <input type="password" class="form-control" id="confirmNewPassword" name="confirmNewPassword" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{t('Close')}}</button>
+                <button type="button" class="btn btn-primary" onclick="resetPassword()">{{t('Reset Password')}}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Шаблон пользвателя -->
+<template id="user-template">
+    <div class="user-row mb-3">
+        <div class="card rounded shadow">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-12 col-md-8">
+                        <div class="mb-2 text-truncate">
+                            <strong>{{t('Email')}}:</strong> <span class="user-email"></span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>{{t('Name')}}:</strong> <span class="user-name"></span>
+                        </div>
+                        <div>
+                            <strong>{{t('Role')}}:</strong> <span class="user-role"></span>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-4 d-flex flex-wrap justify-content-end align-items-start mt-3 mt-md-0">
+                        <button class="btn btn-sm btn-primary text-truncate me-2 mb-2 edit-user">{{t('Edit')}}</button>
+                        <button class="btn btn-sm btn-warning text-truncate me-2 mb-2 reset-password">{{t('Reset Password')}}</button>
+                        <button class="btn btn-sm btn-danger text-truncate mb-2 delete-user">{{t('Delete')}}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script>
+// Инициализация CSRF токена
+//const csrfToken = document.getElementById('csrfToken').value;
+
+// Функция для открытия модального окна добавления пользователя
+function openAddModal() {
+    document.getElementById('addUserForm').reset(); // Очистка формы
+    new bootstrap.Modal('#addUserModal').show(); // Открытие модального окна
+}
+
+// Функция для добавления пользователя
+async function addUser() {
+    const formData = {
+        email: document.getElementById('addUserEmail').value,
+        name: document.getElementById('addUserName').value,
+        password: document.getElementById('addUserPassword').value,
+        role: document.getElementById('addUserRole').value
+    };
+
+    // Проверяем, что все поля заполнены
+    if (!formData.email || !formData.name || !formData.password || !formData.role) {
+        alert("{{t('Please fill all fields')}}");
+        return;
+    }
+
+    try {
+        // Отправляем запрос на сервер
+        const response = await fetch('ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-TOKEN': csrfToken
+            },
+            body: new URLSearchParams({
+                action: 'register_user',
+                email: formData.email,
+                name: formData.name,
+                password: formData.password,
+                role: formData.role,
+                autoLogin: false // Передаем параметр autoLogin как false
+            })
+        });
+
+        // Обрабатываем ответ сервера
+        const result = await response.json();
+
+        if (result.success) {
+            // Если регистрация прошла успешно
+            bootstrap.Modal.getInstance('#addUserModal').hide(); // Закрываем модальное окно
+            await loadUsers(); // Обновляем список пользователей
+            alert(result.message || "{{t('Registration successful!')}}"); // Уведомляем об успехе
+
+        } else {
+            // Если произошла ошибка, выводим сообщение
+            alert(result.message || "{{t('Error adding user')}}");
+        }
+    } catch (error) {
+        // Обработка ошибок сети или других исключений
+        console.error('Error:', error);
+        alert("{{t('Connection error')}}");
+    }
+}
+
+// Функция для открытия модального окна редактирования пользователя
+async function openEditModal(email) {
+    try {
+        const response = await fetch('ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-TOKEN': csrfToken
+            },
+            body: new URLSearchParams({
+                action: 'get_user',
+                email: email
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('editUserEmail').value = data.user.email;
+            document.getElementById('editUserName').value = data.user.name;
+            document.getElementById('editUserRole').value = data.user.role;
+            new bootstrap.Modal('#editUserModal').show();
+        } else {
+            alert(data.message || "{{t('Error loading user data')}}");
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert("{{t('Connection error')}}");
+    }
+}
+
+// Функция для сохранения изменений пользователя
+async function saveUser() {
+    const formData = {
+        email: document.getElementById('editUserEmail').value,
+        name: document.getElementById('editUserName').value,
+        role: document.getElementById('editUserRole').value
+    };
+
+    // Проверка заполнения полей
+    if (!formData.email || !formData.name || !formData.role) {
+        alert("{{t('Please fill in all fields')}}");
+        return;
+    }
+
+    try {
+        const response = await fetch('ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-TOKEN': csrfToken
+            },
+            body: new URLSearchParams({
+                action: 'update_user',
+                data: JSON.stringify({ email: formData.email }),
+                dataUpdate: JSON.stringify({
+                    name: formData.name,
+                    role: formData.role
+                })
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            // Закрываем модальное окно
+            bootstrap.Modal.getInstance('#editUserModal').hide();
+
+            // Обновляем список пользователей
+            await loadUsers(); // Загружаем обновленный список пользователей
+        } else {
+            alert(result.message || "{{t('Error updating user')}}");
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert("{{t('Connection error')}}");
+    }
+}
+
+// Функция для открытия модального окна сброса пароля
+function openResetPasswordModal(email) {
+    document.getElementById('resetPasswordEmail').value = email;
+    document.getElementById('resetPasswordForm').reset(); // Очистка формы
+    new bootstrap.Modal('#resetPasswordModal').show(); // Открытие модального окна
+}
+
+// Функция для сброса пароля
+async function resetPassword() {
+    const email = document.getElementById('resetPasswordEmail').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmNewPassword = document.getElementById('confirmNewPassword').value;
+
+    if (!newPassword || !confirmNewPassword) {
+        alert("{{t('Please fill all fields')}}");
+        return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+        alert("{{t('Passwords do not match')}}");
+        return;
+    }
+
+    try {
+        const response = await fetch('ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-TOKEN': csrfToken
+            },
+            body: new URLSearchParams({
+                action: 'reset_password',
+                email: email,
+                newPassword: newPassword
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            bootstrap.Modal.getInstance('#resetPasswordModal').hide();
+            alert(result.message || "{{t('Password reset successfully')}}");
+        } else {
+            alert(result.message || "{{t('Error resetting password')}}");
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert("{{t('Connection error')}}");
+    }
+}
+
+// Функция для удаления пользователя
+async function deleteUser(email) {
+    if (!confirm(`{{t('Are you sure you want to delete this user?')}}`)) return;
+
+    // Очистка email для селектора
+    const sanitizedEmail = email.replace(/[@.]/g, '-');
+
+    try {
+        const response = await fetch('ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-TOKEN': csrfToken
+            },
+            body: new URLSearchParams({
+                action: 'delete_user',
+                email: email
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            // Обновляем список пользователей
+            await loadUsers(); // Загружаем пользователей заново
+        } else {
+            alert(result.message || "{{t('Error deleting user')}}");
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert("{{t('Connection error')}}");
+    }
+}
+
+function renderUsers(users) {
+    const usersList = document.getElementById('users-list');
+    usersList.innerHTML = ''; // Очистка списка перед добавлением новых данных
+
+    const userTemplate = document.getElementById('user-template').content;
+
+    users.forEach(user => {
+        const userClone = document.importNode(userTemplate, true);
+
+        // Заполнение шаблона данными
+        userClone.querySelector('.user-email').textContent = user.email;
+        userClone.querySelector('.user-name').textContent = user.name;
+        userClone.querySelector('.user-role').textContent = user.role;
+
+        // Добавление обработчиков событий для кнопок
+        userClone.querySelector('.edit-user').onclick = () => openEditModal(user.email);
+        userClone.querySelector('.reset-password').onclick = () => openResetPasswordModal(user.email);
+        userClone.querySelector('.delete-user').onclick = () => deleteUser(user.email);
+
+        // Добавление элемента в список
+        usersList.appendChild(userClone);
+    });
+}
+
+async function loadUsers() {
+    try {
+        const response = await fetch('ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-TOKEN': csrfToken
+            },
+            body: new URLSearchParams({
+                action: 'get_all_users'
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            // Отображаем пользователей или пустой список, если их нет
+            renderUsers(result.users || []);
+        } else {
+            alert(result.message || "{{t('Error loading users')}}");
+            // Отображаем пустой список, если пользователей нет
+            renderUsers([]);
+        }
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert("{{t('Connection error')}}");
+        // Отображаем пустой список или состояние ошибки
+        renderUsers([]);
+    }
+}
+
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadUsers();
+});
+
+</script>
+
+{{template footer.htm}}

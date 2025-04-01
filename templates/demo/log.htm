@@ -1,0 +1,39 @@
+{{template includes/header.htm}}
+
+<h1 class="mb-4">Логи системы</h1>
+<!-- Кнопка для очистки лога -->
+<button id="clearLogButton" class="btn btn-danger mb-4">Очистить лог</button>
+
+<div class="log-container p-4 border rounded-3 font-monospace overflow-auto shadow">
+    <?php
+        $logger = Logger::getInstance();
+        echo str_replace(["\r\n", "\n", "\r"], '<br>', htmlspecialchars($logger->getLogContent()));
+    ?>
+</div>
+
+<script>
+    document.getElementById('clearLogButton').addEventListener('click', function() {
+        if (confirm('Вы уверены, что хотите очистить лог?')) {
+            fetch('ajax.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRF-TOKEN': csrfToken
+                },
+                body: 'action=clearLog'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Лог успешно очищен.');
+                    location.reload();
+                } else {
+                    alert('Ошибка: ' + data.message);
+                }
+            })
+            .catch(error => alert('Ошибка: ' + error.message));
+        }
+    });
+</script>
+
+{{template includes/footer.htm}}
