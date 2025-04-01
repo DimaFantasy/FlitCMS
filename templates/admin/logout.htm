@@ -1,6 +1,0 @@
-{{php if ( !$user->isCurrentRole('Admin'))die('Access Denied'); }} 
-{{php
-    $user->logout();
-    header("Location: index.php");
-    exit;
-}}
