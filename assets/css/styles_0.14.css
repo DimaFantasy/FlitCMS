@@ -4,36 +4,36 @@
 
 .custom-link {
     display: block;
-    padding: 4px 8px;  /* Уменьшаем отступы сверху и снизу */
+    padding: 4px 8px;  /* РЈРјРµРЅСЊС€Р°РµРј РѕС‚СЃС‚СѓРїС‹ СЃРІРµСЂС…Сѓ Рё СЃРЅРёР·Сѓ */
     border-radius: 5px;
     text-decoration: none;
     text-align: center;
-    font-size: 0.9rem; /* Можно слегка уменьшить размер шрифта */
+    font-size: 0.9rem; /* РњРѕР¶РЅРѕ СЃР»РµРіРєР° СѓРјРµРЅСЊС€РёС‚СЊ СЂР°Р·РјРµСЂ С€СЂРёС„С‚Р° */
 }
 
 [data-bs-theme="dark"] .custom-link-stat {
-    background-color: #00095C !important; /* Синий */
+    background-color: #00095C !important; /* РЎРёРЅРёР№ */
     color: #b0b0b0 !important;
 }
 [data-bs-theme="dark"] .custom-link-info {
-    background-color: #036807 !important; /* Зелёный */
+    background-color: #036807 !important; /* Р—РµР»С‘РЅС‹Р№ */
     color: #b0b0b0 !important;
 }
 [data-bs-theme="dark"] .custom-link-edit {
-    background-color: #610002 !important; /* Красный */
+    background-color: #610002 !important; /* РљСЂР°СЃРЅС‹Р№ */
     color: #b0b0b0 !important;
 }
 
 [data-bs-theme="light"] .custom-link-stat {
-    background-color: #cce5ff !important; /* Светло-синий */
+    background-color: #cce5ff !important; /* РЎРІРµС‚Р»Рѕ-СЃРёРЅРёР№ */
     color: black !important;
 }
 [data-bs-theme="light"] .custom-link-info {
-    background-color: #d4edda !important; /* Светло-зелёный */
+    background-color: #d4edda !important; /* РЎРІРµС‚Р»Рѕ-Р·РµР»С‘РЅС‹Р№ */
     color: black !important;
 }
 [data-bs-theme="light"] .custom-link-edit {
-    background-color: #f8d7da !important; /* Светло-красный */
+    background-color: #f8d7da !important; /* РЎРІРµС‚Р»Рѕ-РєСЂР°СЃРЅС‹Р№ */
     color: black !important;
 }
 
@@ -52,7 +52,7 @@
     }
 
     .box {
-        width: calc(50% - 10px); /* Два блока в ряд */
+        width: calc(50% - 10px); /* Р”РІР° Р±Р»РѕРєР° РІ СЂСЏРґ */
         height: 100px;
         background-color: lightgray;
         margin: 5px;
@@ -60,10 +60,10 @@
     }
 
     .wide {
-        width: 100%; /* Широкий блок */
+        width: 100%; /* РЁРёСЂРѕРєРёР№ Р±Р»РѕРє */
     }
 
-    /* Если экран слишком узкий, все блоки в столбик */
+    /* Р•СЃР»Рё СЌРєСЂР°РЅ СЃР»РёС€РєРѕРј СѓР·РєРёР№, РІСЃРµ Р±Р»РѕРєРё РІ СЃС‚РѕР»Р±РёРє */
     @media (max-width: 600px) {
         .box {
             width: 100%;
