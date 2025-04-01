@@ -10,18 +10,17 @@ from tqdm import tqdm
 import socket
 
 # Конфигурационные параметры
-FTP_HOST = ""  # Адрес FTP-сервера
-FTP_USER = ""  # Логин пользователя FTP
-FTP_PASS = ""  # Пароль пользователя FTP
-REMOTE_DIR = "/"  # Целевая директория на сервере
-LOCAL_DIR = "."  # Локальная директория для загрузки
+FTP_HOST = r""  # Адрес FTP-сервера
+FTP_USER = r""  # Логин пользователя FTP
+FTP_PASS = r""  # Пароль пользователя FTP
+REMOTE_DIR = r"/"  # Целевая директория на сервере
+LOCAL_DIR = r"."  # Локальная директория для загрузки
 
 # Настройки исключений
-EXCLUDED_EXTENSIONS = " .lnk, .py , .rar"  # Расширения файлов для исключения
-EXCLUDED_FILES_DIRS = (
-    r" .git,.vscode.,cache, includes\temp "  # Исключаемые файлы и директории
-)
-ENCODING = "cp1251"  # Кодировка ftp сервера для соединения
+EXCLUDED_EXTENSIONS = r" .lnk, .py , .rar"  # Расширения файлов для исключения
+EXCLUDED_FILES_DIRS =  r" .git,.vscode.,cache, includes\temp "  # Исключаемые файлы и директории
+
+ENCODING = r"cp1251"  # Кодировка ftp сервера для соединения
 
 MAX_RETRIES = 3  # Максимальное количество попыток подключения и загрузки
 RETRY_DELAY = 5  # Интервал между попытками в секундах
