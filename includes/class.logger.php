@@ -40,6 +40,30 @@ class Logger
                 throw new Exception("Не удалось создать директорию для логов: {$this->logDir}");
             }
         }
+
+        // Путь к файлу лога
+        $logFilePath = $this->logDir . $this->defaultLogFile;
+
+        // Создаем файл лога, если его нет
+        if (!file_exists($logFilePath)) {
+            if (!touch($logFilePath)) {
+                throw new Exception("Не удалось создать файл лога: {$logFilePath}");
+            }
+        }
+
+        // Проверяем размер файла и обрабатываем, если превышен лимит
+        if (file_exists($logFilePath) && filesize($logFilePath) > $this->maxSize) {
+            // Логика для обработки превышения размера (например, создание нового файла)
+            // В данном случае можно создать новый лог-файл с текущей датой.
+            $newLogFile = $this->logDir . 'app_' . date('Y-m-d_H-i-s') . '.log';
+            if (!rename($logFilePath, $newLogFile)) {
+                throw new Exception("Не удалось архивировать старый лог: {$logFilePath}");
+            }
+            // Создаем новый файл для логов
+            if (!touch($logFilePath)) {
+                throw new Exception("Не удалось создать новый файл лога: {$logFilePath}");
+            }
+        }
     }
 
     /**
