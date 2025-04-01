@@ -102,7 +102,7 @@
     "Session Key": "სესიის გასაღები",
     "Always": "ყოველთვის",
     "Session Lifetime": "სესიის სიცოცხლის ხანგრძლივობა",
-    "Language Cookie Name": "ენის ფუნთუშის სახელი",
+    "Language Cookie Name": "ენის cookie-ის სახელი",
     "Default Language": "ნაგულისხმევი ენა",
     "Allowed Languages": "ნებადართული ენები",
     "Missing Translations File": "დაკარგული თარგმანების ფაილი",
