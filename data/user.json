@@ -1,0 +1,16 @@
+{
+    "columns": [
+        "email",
+        "password",
+        "name",
+        "role"
+    ],
+    "records": [
+        {
+            "email": "399221@gmail.com",
+            "password": "$2y$10$XF3MNEAxAMJ7R.Ml80jy2uN\/1WvISpWgamH4nH1Na6zTUO7I0ukU6",
+            "name": "Dima",
+            "role": "admin"
+        }
+    ]
+}

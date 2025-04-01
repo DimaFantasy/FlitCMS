@@ -1,0 +1,78 @@
+{{template includes/header.htm}}
+
+<!-- Главный контент -->
+<div class="container text-center my-5 hero-section">
+    <img src="assets/images/kalibry.png" alt="Flit CMS Logo" class="logo-transparent mb-4">
+    <h1 class="display-4 fw-bold mb-3">{{t('Welcome to Flit CMS!')}}</h1>
+    <div class="lead text-muted mb-4 cms-features">
+        <p>{{t('Modern micro-CMS for fast and elegant solutions')}}</p>
+        <div class="mt-3">
+            <span class="badge bg-success me-2">{{t('Multilingual')}}</span>
+            <span class="badge bg-info me-2">{{t('Instant speed')}}</span>
+            <span class="badge bg-warning">{{t('Easy management')}}</span>
+        </div>
+    </div>
+    
+    <div class="cta-buttons">
+        <a href="?page=about.htm" class="btn btn-primary btn-lg me-3">
+            <i class="bi bi-speedometer2 me-2"></i>{{t('System Information')}}
+        </a>
+    </div>
+</div>
+
+<!-- Преимущества системы -->
+<div class="container features py-5">
+    <div class="row text-center g-4">
+        <div class="col-md-4 feature-item">
+            <i class="bi bi-globe fs-1 text-primary"></i>
+            <h3 class="my-3">{{t('Multilingual Support')}}</h3>
+            <p>{{t('Built-in support for unlimited languages with easy translation management')}}</p>
+        </div>
+        <div class="col-md-4 feature-item">
+            <i class="bi bi-lightning-charge fs-1 text-success"></i>
+            <h3 class="my-3">{{t('Lightning Fast')}}</h3>
+            <p>{{t('Optimized core and minimalist approach for maximum performance')}}</p>
+        </div>
+        <div class="col-md-4 feature-item">
+            <i class="bi bi-puzzle fs-1 text-info"></i>
+            <h3 class="my-3">{{t('Modular System')}}</h3>
+            <p>{{t('Flexible template and component system for any project')}}</p>
+        </div>
+    </div>
+</div>
+
+<!-- Динамическое переключение языка -->
+<div class="language-switcher text-center mb-4">
+    <small class="text-muted d-block mb-2">{{t('Select Language:')}}</small>
+    <div class="btn-group">
+        <?php
+
+        // Получаем список языков из конфигурации
+        $languages = array_map('trim', explode(',', $cmsConfig['validLanguages']));
+        
+        // Определяем текущий язык
+        //$lang = $_COOKIE[$cmsConfig['langCookieName']] ?? $_POST['lang'] ?? $cmsConfig['defaultLanguage'];
+        
+        // Формируем кнопки для каждого языка
+        foreach ($languages as $langCode) {
+            $langUpper = strtoupper($langCode);
+            $isActive = ($langCode === $ACTIVE_LANGUAGE) ? 'active' : '';
+            $isDisabled = ($langCode === $ACTIVE_LANGUAGE) ? 'disabled' : '';
+            
+            // Get translated text for "Switch to" dynamically
+            $switchToText = t('Switch to') . ' ' . $langUpper;
+        
+            echo "<button class='btn btn-sm btn-outline-secondary $isActive' 
+                    onclick='setLanguage(\"$langCode\")'
+                    title='$switchToText'
+                    $isDisabled>
+                    $langUpper
+                  </button>";
+        }
+        ?>
+        
+        
+    </div>
+</div>
+
+{{template includes/footer.htm}}

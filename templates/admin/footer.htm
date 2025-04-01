@@ -1,0 +1,24 @@
+{{php if ( !$user->isCurrentRole('Admin'))die('Access Denied'); }}
+        </div> <!-- Закрываем flex-grow-1 -->
+    </div> <!-- Закрываем d-flex -->
+
+    <!-- Подвал -->
+    <footer id="footer" class="text-center py-4 shadow mt-4">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center"> <!-- Добавляем flex-контейнер -->
+                <p class="mb-0">&copy; {{$DESCRIPTION}}</p>
+                <!-- Переключатель темы -->
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="themeSwitch">
+                    <label class="form-check-label" id="themeLabel" for="themeSwitch">{{t('Light theme')}}</label>
+                </div>
+            </div>
+        </div>
+    </footer>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/js/bootstrap.bundle.min.js"></script>
+
+
+
+    {{template script.htm}}
+</body>
+</html>

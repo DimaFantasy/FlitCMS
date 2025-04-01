@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo $DESCRIPTION; ?></title>
+    <!-- Подключение favicon -->
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="assets/css/global_styles_0.63.css">
+    <script>
+        window.langCookieName = "{{$cmsConfig['langCookieName']}}"; // Имя куки для языка передается через PHP
+        window.csrfToken = "{{$_SESSION['csrf_token']}}"; // Передаем CSRF-токен в JavaScript
+    </script>
+</head>
+<body>
+    <!-- Навигация -->
+    <nav class="navbar navbar-expand-lg shadow" id="navbar">
+        <div class="container">
+
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+
+                <ul class="navbar-nav me-auto">
+                    <!-- Главная -->
+                    <li class="nav-item">
+                        <a class="nav-link {{if $ACTIVE_PAGE == 'index.htm'}}active{{/if}}" href="?page=index.htm">{{t('welcome')}}</a>
+                    </li>
+
+                    <!-- Информация -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownInfo" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            {{t('Information')}}
+                        </a>
+                        <ul class="dropdown-menu" aria-labelledby="navbarDropdownInfo">
+                            <li><a class="dropdown-item {{if $ACTIVE_PAGE == 'about.htm'}}active{{/if}}" href="?page=about.htm">{{t('about')}}</a></li>
+                            <li><a class="dropdown-item {{if $ACTIVE_PAGE == 'contacts.htm'}}active{{/if}}" href="?page=contacts.htm">{{t('contacts')}}</a></li>
+                            <li><a class="dropdown-item {{if $ACTIVE_PAGE == 'help.htm'}}active{{/if}}" href="?page=template_syntax.htm">{{t('template syntax')}}</a></li>
+                            <li><a class="dropdown-item {{if $ACTIVE_PAGE == 'log.htm'}}active{{/if}}" href="?page=log.htm">{{t('log')}}</a></li>
+                        </ul>
+                    </li>
+
+                    <!-- Аккаунт -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownAccount" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            {{t('Account')}}
+                        </a>
+                        <ul class="dropdown-menu" aria-labelledby="navbarDropdownAccount">
+                            {{if $user->isLoggedIn()}}
+                                <li><a class="dropdown-item {{if $ACTIVE_PAGE == 'profile.htm'}}active{{/if}}" href="?page=profile.htm">{{t('profile')}}</a></li>
+                                <li><a class="dropdown-item" href="?page=logout.htm">{{t('logout')}}</a></li>
+                            {{else}}
+                                <li><a class="dropdown-item {{if $ACTIVE_PAGE == 'register.htm'}}active{{/if}}" href="?page=register.htm">{{t('register')}}</a></li>
+                                <li><a class="dropdown-item {{if $ACTIVE_PAGE == 'login.htm'}}active{{/if}}" href="?page=login.htm">{{t('login')}}</a></li>
+                            {{/if}}
+                        </ul>
+                    </li>
+
+                    <!-- Администрирование -->
+                    {{if $user->isCurrentRole('Admin')}}
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownAdmin" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                {{t('Administration')}}
+                            </a>
+                            <ul class="dropdown-menu" aria-labelledby="navbarDropdownAdmin">
+                                <li><a class="dropdown-item" href="?page=index.htm&isAdmin">{{t('Admin panel')}}</a></li>
+                            </ul>
+                        </li>
+                    {{/if}}
+                </ul>
+
+                {{if $user->isLoggedIn()}}
+                    <div class="ms-auto me-3">
+                        <span class="navbar-text">
+                            {{t('user')}}&nbsp;: {{$user->getCurrentUser()['name']}}
+                        </span>
+                    </div>
+                {{/if}}
+
+                <!-- Переключатель языков -->
+                <div id="language-selector-container"></div>
+
+            </div>
+        </div>
+    </nav>
+
+   <div class="container my-5"> <!-- Открываем Основной контент -->

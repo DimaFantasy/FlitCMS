@@ -1,0 +1,615 @@
+{{template includes/header.htm}}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3"></script>
+
+<?php
+// Отключаем вывод предупреждений (warnings)
+error_reporting(E_ALL & ~E_WARNING);
+
+// Проверка протокола
+$protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'HTTPS' : 'HTTP';
+
+// Получение информации о SSL-сертификате (если используется HTTPS)
+$sslInfo = null;
+$sslError = null; // Переменная для хранения ошибки SSL
+
+if ($protocol === 'HTTPS') {
+    // Создаем контекст для захвата сертификата
+    $context = stream_context_create([
+        "ssl" => [
+            "capture_peer_cert" => true,
+            "verify_peer" => false,       // Отключаем проверку сертификата
+            "verify_peer_name" => false,  // Отключаем проверку имени хоста
+        ],
+    ]);
+
+    // Пытаемся подключиться к серверу
+    $client = @stream_socket_client("ssl://" . $_SERVER['HTTP_HOST'] . ":443", $errno, $errstr, 30, STREAM_CLIENT_CONNECT, $context);
+
+    if ($client) {
+        // Получаем параметры контекста (включая сертификат)
+        $cert = stream_context_get_params($client);
+        if (!empty($cert['options']['ssl']['peer_certificate'])) {
+            // Парсим сертификат
+            $certDetails = openssl_x509_parse($cert['options']['ssl']['peer_certificate']);
+            if ($certDetails) {
+                $sslInfo = [
+                    'validFrom' => date('Y-m-d H:i:s', $certDetails['validFrom_time_t']), // Дата выдачи
+                    'validTo' => date('Y-m-d H:i:s', $certDetails['validTo_time_t']),     // Дата окончания
+                    'issuer' => $certDetails['issuer']['O'] ?? 'Unknown',                // Издатель
+                ];
+
+                // Проверяем, истёк ли срок действия сертификата
+                $currentTime = time();
+                if ($currentTime > $certDetails['validTo_time_t']) {
+                    $sslError = '🔴 ' . t('SSL certificate has expired.');
+                }
+            }
+        }
+        fclose($client);
+    } else {
+        // Если подключение не удалось, сохраняем ошибку
+        if (strpos($errstr, 'certificate verify failed') !== false) {
+            $sslError = '🔴 ' . t('Error: SSL certificate has expired or is invalid.');
+        } else {
+            $sslError = '🔴 ' . t('Connection error: ') . $errstr . '(' . t('error code:') . $errno . ')';
+        }
+    }
+}
+
+// Инициализация переменной $envInfo
+$envInfo = [
+    'PHP' => phpversion(),
+    'Расширения PHP' => implode(', ', get_loaded_extensions()),
+    'Веб-сервер' => $_SERVER['SERVER_SOFTWARE']
+];
+
+// Получение списка модулей Apache (если веб-сервер — Apache)
+$apacheModules = [];
+if (strpos($_SERVER['SERVER_SOFTWARE'], 'Apache') !== false && function_exists('apache_get_modules')) {
+    $apacheModules = apache_get_modules();
+}
+?>
+
+
+<h1 class="display-4 text-center mb-4 p-1">{{t('About project')}}</h1>
+
+<div class="row border p-4 shadow-sm">
+    <div class="col-md-12 p-1">
+        <h2 class="fw-bold">{{t('Our mission')}}</h2>
+        <h3 class="text-muted">{{t('Create a simple and effective tool for rapid development')}}</h3>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12 p-1">
+        <h2 class="fw-bold">{{t('CPU and RAM Monitoring')}}</h2>
+        <div class="border rounded p-2 mb-3">
+            <!-- График -->
+            <canvas id="resourceChartCpuRam" style="width: 100%;  height: 240px; "></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Добавление информации в раздел "Информация о среде" -->
+<div class="col-md-12 p-1">
+    <h2 class="fw-bold">{{t('Environment Information')}}</h2>
+    <div class="border rounded p-2 mb-3">
+        <!-- Протокол -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Protocol')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo $protocol; ?></span>
+        </div>
+
+        <!-- SSL-сертификат -->
+        <?php if ($sslInfo): ?>
+            <div class="d-flex justify-content-between border-bottom py-2">
+                <span class="col-4 pe-2">{{t('SSL Certificate')}}</span>
+                <span class="col-8 border-start ps-2 text-left">
+                    {{t('Valid from')}}: <?php echo $sslInfo['validFrom']; ?><br>
+                    {{t('Valid until')}}: <?php echo $sslInfo['validTo']; ?><br>
+                    {{t('Issuer')}}: <?php echo $sslInfo['issuer']; ?><br>
+                    <?php if ($sslError): ?>
+                        <span class="text-danger">{{t($sslError)}}</span>
+                    <?php endif; ?>
+                </span>
+            </div>
+        <?php elseif ($sslError): ?>
+            <div class="d-flex justify-content-between border-bottom py-2">
+                <span class="col-4 pe-2">{{t('SSL Certificate')}}</span>
+                <span class="col-8 border-start ps-2 text-danger">{{t($sslError)}}</span>
+            </div>
+        <?php else: ?>
+            <div class="d-flex justify-content-between border-bottom py-2">
+                <span class="col-4 pe-2">{{t('SSL Certificate')}}</span>
+                <span class="col-8 border-start ps-2 text-danger">🔴 {{t('Certificate is missing or unavailable')}}</span>
+            </div>
+        <?php endif; ?>
+
+        <!-- Версия OpenSSL -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('OpenSSL Version')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo OPENSSL_VERSION_TEXT; ?></span>
+        </div>
+
+        <!-- Веб-сервер -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Web Server')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo $_SERVER['SERVER_SOFTWARE']; ?></span>
+        </div>
+
+        <!-- Модули Apache -->
+        <?php if (!empty($apacheModules)): ?>
+            <div class="d-flex justify-content-between border-bottom py-2">
+                <span class="col-4 pe-2">{{t('Apache Modules')}}</span>
+                <span class="col-8 border-start ps-2"><?php echo implode(', ', $apacheModules); ?></span>
+            </div>
+        <?php elseif (strpos($_SERVER['SERVER_SOFTWARE'], 'Apache') !== false): ?>
+            <div class="d-flex justify-content-between border-bottom py-2">
+                <span class="col-4 pe-2">{{t('Apache Modules')}}</span>
+                <span class="col-8 border-start ps-2 text-warning">⚠️ {{t('Apache module information is unavailable (PHP is not running as an Apache module).')}}</span>
+            </div>
+        <?php endif; ?>
+
+        <!-- PHP -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('PHP')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo phpversion(); ?></span>
+        </div>
+
+        <!-- Расширения PHP -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('PHP Extensions')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo implode(', ', get_loaded_extensions()); ?></span>
+        </div>
+
+        <!-- Операционная система -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Operating System')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo php_uname('s') . ' ' . php_uname('r'); ?></span>
+        </div>
+
+<!-- Лимит памяти PHP -->
+<div class="d-flex justify-content-between border-bottom py-2">
+    <span class="col-4 pe-2">{{t('PHP Memory Limit')}}</span>
+    <span class="col-8 border-start ps-2"><?php echo ini_get('memory_limit'); ?></span>
+</div>
+
+<!-- Используемую память конкретным скриптом PHP -->
+<div class="d-flex justify-content-between border-bottom py-2">
+    <span class="col-4 pe-2">{{t('Memory Used by PHP Script')}}</span>
+    <span class="col-8 border-start ps-2"><?php echo round(memory_get_usage() / 1024 / 1024, 2) . ' MB'; ?></span>
+</div>
+
+
+<!-- Пиковое использование памяти при выполнении скрипта PHP -->
+<div class="d-flex justify-content-between border-bottom py-2">
+    <span class="col-4 pe-2">{{t('Peak Memory Usage by PHP Script')}}</span>
+    <span class="col-8 border-start ps-2"><?php echo round(memory_get_peak_usage() / 1024 / 1024, 2) . ' MB'; ?></span>
+</div>
+
+        <!-- Время выполнения скрипта -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('PHP Script Execution Time')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo round(microtime(true) - $_SERVER['REQUEST_TIME_FLOAT'], 4) . ' сек'; ?></span>
+        </div>
+
+        <!-- Свободное место на диске -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Free Disk Space')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo round(disk_free_space('/') / 1024 / 1024 / 1024, 2) . ' GB'; ?></span>
+        </div>
+
+        <!-- Общее место на диске -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Total Disk Space')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo round(disk_total_space('/') / 1024 / 1024 / 1024, 2) . ' GB'; ?></span>
+        </div>
+
+        <!-- Время работы сервера -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Server Uptime')}}</span>
+            <span class="col-8 border-start ps-2">
+                <?php
+                if (function_exists('shell_exec')) {
+                    // Получаем вывод команды uptime
+                    $uptime = shell_exec('uptime');
+
+                    if ($uptime) {
+                        $uptime = trim($uptime);
+
+                        // Проверка на операционную систему Linux, macOS или FreeBSD
+                        if (strpos($uptime, 'up') !== false) {
+                            // Для Linux, macOS, FreeBSD
+                            $uptime_parts = explode(',', $uptime);
+
+                            $time_up = trim($uptime_parts[0]); // Время работы сервера
+                            $users = trim($uptime_parts[1]);   // Количество пользователей
+                            $load_avg = trim($uptime_parts[2]); // Средняя нагрузка процессора
+
+                            echo "<strong>".t('Uptime').":</strong> $time_up <br>";
+                            echo "<strong>".t('Users').":</strong> $users <br>";
+                            echo "<strong>".t('Load Average').":</strong> $load_avg";
+                        } elseif (strpos($uptime, 'System Boot Time') !== false) {
+                            // Для Windows (через systeminfo)
+                            echo "<strong>".t('Last Boot Time') . ":</strong> $uptime";
+                        } else {
+                            echo t('Unable to recognize output format.');
+                        }
+                    } else {
+                        echo t('Failed to retrieve server uptime data.');
+                    }
+                } else {
+                    echo t('Command not available on server.');
+                }
+                ?>
+            </span>
+        </div>
+
+        <!-- Пользователь -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('User')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo get_current_user(); ?></span>
+        </div>
+
+        <!-- Кодировка скрипта -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Script Encoding')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo ini_get('default_charset'); ?></span>
+        </div>
+
+        <!-- Safe Mode -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Safe Mode')}}</span>
+            <span class="col-8 border-start ps-2 text-<?php echo ini_get('safe_mode') ? 'danger' : 'success'; ?>">
+                <?php echo ini_get('safe_mode') ? '🟢 '. t('Enabled') : '🔴 '.t('Disabled'); ?>
+            </span>
+        </div>
+
+        <!-- Display Errors -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Display Errors')}}</span>
+            <span class="col-8 border-start ps-2 text-<?php echo ini_get('display_errors') ? 'danger' : 'success'; ?>">
+                <?php echo ini_get('display_errors') ? '🟢 '. t('Enabled') : '🔴 '.t('Disabled'); ?>
+            </span>
+        </div>
+
+
+    </div>
+</div>
+
+<!-- Проверка доступности сервисов -->
+<div class="col-md-12 p-1">
+    <h2 class="fw-bold">{{t('Service Availability')}}</h2>
+    <div class="border rounded p-2 mb-3">
+        <?php
+        function checkPort($host, $port, $serviceName) {
+            $connection = @fsockopen($host, $port, $errno, $errstr, 0.3);
+            $status = $connection ? '🟢 ' . t('Available') : '🔴 ' . t('Unavailable');
+            $color = $connection ? 'text-success' : 'text-danger';
+            if ($connection) fclose($connection);
+            echo "<div class='d-flex justify-content-between border-bottom py-2'>"
+                . "<span class='col-4 pe-2'>$serviceName ($port)</span>"
+                . "<span class='col-8 text-left border-start ps-2 $color'>$status</span>"
+                . "</div>";
+        }
+
+        checkPort('localhost', 3306, 'MySQL');
+
+        if (class_exists('SQLite3')) {
+            try {
+                $db = new SQLite3(':memory:');
+                echo "<div class='d-flex justify-content-between border-bottom py-2'>"
+                    . "<span class='col-4 pe-2'>SQLite</span>"
+                    . "<span class='col-8 text-left border-start ps-2 text-success'>"
+                    . '🟢 '. t('Available'). '(version: '. SQLite3::version()['versionString'] . ')'
+                    . "</span></div>";
+            } catch (Exception $e) {
+                echo "<div class='d-flex justify-content-between border-bottom py-2'>"
+                    . "<span class='col-4 pe-2'>SQLite</span>"
+                    . "<span class='col-8 text-left border-start ps-2 text-danger'>"
+                    . '🔴 '. t('Connection error') . '(error: '. $e->getMessage() . ")"
+                    . "</span></div>";
+            }
+        } else {
+            echo "<div class='d-flex justify-content-between border-bottom py-2'>"
+                . "<span class='col-4 pe-2'>SQLite</span>"
+                . "<span class='col-8 text-left border-start ps-2 text-danger'>"
+                . "🔴 " . t('Unavailable')
+                . "</span></div>";
+        }
+
+        checkPort('localhost', 22, 'SSH');
+        checkPort('localhost', 21, 'FTP');
+        checkPort('localhost', 443, 'HTTPS');
+        ?>
+    </div>
+</div>
+
+<!-- Настройки CMS -->
+<div class="col-md-12 p-1">
+    <h2 class="fw-bold">{{t('CMS Settings')}}</h2>
+    <div class="border rounded p-2 mb-3">
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('General Title')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['basePageTit']; ?></span>
+        </div>
+        <!-- Версия CMS -->
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('CMS Version')}}</span>
+            <span class="col-8 border-start ps-2"><?php echo $cmsConfig['version']; ?></span>
+        </div>
+
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Language Files Folder')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['langDir']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Missing Translations File')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['missingTranslationsFileName']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Allowed Languages')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['validLanguages']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Default Language')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['defaultLanguage']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Language Cookie Name')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['langCookieName']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Session Lifetime')}}</span>
+            <span class="col-8 text-left border-start ps-2">
+                <?php
+                    $sessionTime = $cmsConfig['lifeTime'];
+                    echo $sessionTime;
+                    $sessionColor = $sessionTime == -1 ? 'text-success' : ($sessionTime == 0 ? 'text-danger' : 'text-warning');
+                    if ($sessionTime == -1) {
+                        echo '🟢 ' . t('Always');
+                    } elseif ($sessionTime == 0) {
+                        echo '🔴 ' . t('Until browser is closed');
+                    } else {
+                        echo $sessionTime . ', ' . t('hours');
+                    }
+                ?>
+                <span class="<?php echo $sessionColor; ?>"></span>
+            </span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Session Key')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['sessionKey']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('User Cookie Name')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['userCookeName']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Active Template Folder')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['tplDir']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Template Compression')}}</span>
+            <span class="col-8 text-left border-start ps-2 text-<?php echo $cmsConfig['tplCompress'] ? 'success' : 'danger'; ?>">
+                <?php echo $cmsConfig['tplCompress'] ? '🟢 '. t('Enabled') : '🔴 '.t('Disabled'); ?>
+            </span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Force Compilation')}}</span>
+            <span class="col-8 text-left border-start ps-2 text-<?php echo $cmsConfig['tplForceCompile'] ? 'success' : 'danger'; ?>">
+                <?php echo $cmsConfig['tplForceCompile'] ? '🟢 '. t('Enabled') : '🔴 '.t('Disabled'); ?>
+            </span>
+        </div>
+    </div>
+
+    <!-- Настройки хранилища данных -->
+    <div class="border rounded p-2 mb-3">
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Data Storage Type')}}</span>
+            <span class="col-8 text-left border-start ps-2">
+                <?php
+                if ($cmsConfig['storage'] === 'mysql') {
+                    echo '🟢 '. t('MySQL');
+                } elseif ($cmsConfig['storage'] === 'json') {
+                    echo '🟢 '. t('JSON');
+                }
+                ?>
+            </span>
+        </div>
+    </div>
+
+    <!-- Настройки MySQL -->
+    <div class="border rounded p-2 mb-3">
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">MySQL</span>
+            <span class="col-8 text-left border-start ps-2 text-<?php echo $cmsConfig['storage'] === 'mysql' ? 'success' : 'secondary'; ?>"><?php echo $cmsConfig['storage'] === 'mysql' ? '🟢'. t('Active') : '⚪ '. t('Inactive'); ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('MySQL Host')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['mysql']['host']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Database Name')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['mysql']['dbname']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('MySQL User')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['mysql']['user']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('MySQL Password')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['mysql']['password']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Charset')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['mysql']['charset']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Users Table')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['mysql']['UsersTableName']; ?></span>
+        </div>
+    </div>
+
+    <!-- Настройки JSON -->
+    <div class="border rounded p-2 mb-3">
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">JSON</span>
+            <span class="col-8 text-left border-start ps-2 text-<?php echo $cmsConfig['storage'] === 'json' ? 'success' : 'secondary'; ?>"><?php echo $cmsConfig['storage'] === 'json' ? '🟢 '. t('Active'): '⚪ '. t('Inactive'); ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Data Storage Path')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['json']['path']; ?></span>
+        </div>
+        <div class="d-flex justify-content-between border-bottom py-2">
+            <span class="col-4 pe-2">{{t('Users Table')}}</span>
+            <span class="col-8 text-left border-start ps-2"><?php echo $cmsConfig['json']['UsersTableName']; ?></span>
+        </div>
+    </div>
+</div>
+
+</div>
+
+
+<script>
+// Инициализация графика для CPU и RAM
+var ctxCpuRam = document.getElementById('resourceChartCpuRam').getContext('2d');
+var chartCpuRam = new Chart(ctxCpuRam, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [
+            {
+                label: 'RAM (MB)',
+                data: [],
+                borderColor: 'blue',
+                fill: false,
+                yAxisID: 'y1',  // Привязка к первой оси Y (для памяти)
+                tension: 0.2 // Для мягкости кривой
+            },
+            {
+                label: 'CPU (%)',
+                data: [],
+                borderColor: 'green',
+                fill: false,
+                yAxisID: 'y2',  // Привязка ко второй оси Y (для процессора)
+                tension: 0.2 // Для мягкости кривой
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        animation: true,
+        plugins: {
+            legend: {
+                display: false // Скрываем легенду
+            }
+        },
+        scales: {
+            x: {
+                display: true,
+                title: {
+                    display: false,
+                    text: 'Time'
+                },
+                grid: {
+                    color: 'rgba(200, 200, 200, 0.1)' // Цвет сетки для оси X
+                }
+            },
+            y1: {
+                title: {
+                    display: true,
+                    text: 'RAM (MB)',
+                    color: 'blue'
+                },
+                beginAtZero: true,
+                ticks: {
+                    color: 'blue'
+                },
+                grid: {
+                    color: 'rgba(0, 0, 255, 0.2)' // Цвет сетки для оси Y1 (RAM)
+                },
+                position: 'left'
+            },
+            y2: {
+                title: {
+                    display: true,
+                    text: 'CPU (%)',
+                    color: 'green'
+                },
+                beginAtZero: true,
+                ticks: {
+                    color: 'green'
+                },
+                grid: {
+                    color: 'rgba(0, 255, 0, 0.2)' // Цвет сетки для оси Y2 (CPU)
+                },
+                position: 'right'
+            }
+        }
+    }
+});
+
+var timeCounter = 0;  // Счетчик времени для меток
+var maxPoints = 60; // Максимальное количество точек на графике
+var isRequestPending = false; // Флаг для отслеживания состояния запроса
+var abortController = null; // Контроллер для отмены запроса
+
+function updateStats() {
+    if (isRequestPending) return; // Если запрос уже выполняется, выходим
+
+    isRequestPending = true; // Устанавливаем флаг, что запрос выполняется
+    abortController = new AbortController(); // Создаем новый AbortController
+
+    const timeoutId = setTimeout(() => {
+        //console.log('Прошло 5 секунд, отменяем запрос');
+        abortController.abort(); // Отменяем текущий запрос
+        isRequestPending = false; // Сбрасываем флаг
+        updateStats(); // Повторяем запрос
+    }, 5000);
+
+    const startTime = Date.now(); // Запоминаем время начала запроса
+
+    fetch('stats.php', { signal: abortController.signal })
+        .then(response => response.json())
+        .then(data => {
+            // Обновляем график CPU и RAM
+            if (chartCpuRam.data.labels.length >= maxPoints) {
+                chartCpuRam.data.labels.shift();
+                chartCpuRam.data.datasets.forEach(dataset => dataset.data.shift());
+            }
+            chartCpuRam.data.labels.push(timeCounter);
+            chartCpuRam.data.datasets[0].data.push(data.used_memory); // Память
+            chartCpuRam.data.datasets[1].data.push(data.cpu); // CPU
+            chartCpuRam.update('active'); // Анимация при загрузке 'active'
+
+            timeCounter = (timeCounter + 1) % maxPoints; // Увеличиваем счетчик времени
+        })
+        .catch(error => {
+            if (error.name === 'AbortError') {
+                console.log('Request aborted due to timeout');
+            } else {
+                console.error('Error loading data'), error;
+            }
+        })
+        .finally(() => {
+            clearTimeout(timeoutId); // Очищаем таймер
+            isRequestPending = false; // Сбрасываем флаг
+
+            const requestDuration = Date.now() - startTime;
+            const delay = requestDuration < 1000 ? 1000 - requestDuration : 0;
+            setTimeout(updateStats, delay); // Запускаем следующий запрос с задержкой
+        });
+}
+
+// Запускаем обновление данных
+updateStats();
+
+// Обработчик для изменения размера окна
+window.addEventListener('resize', function() {
+    chartCpuRam.resize();
+});
+</script>
+
+{{template includes/footer.htm}}

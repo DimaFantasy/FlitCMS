@@ -1,0 +1,107 @@
+{{php if ( !$user->isCurrentRole('Admin'))die('Access Denied'); }} 
+{{template header.htm}}
+
+<div class="container-fluid p-4">
+
+    <h2>{{t('System Logs')}}</h2>
+
+    <!-- Кнопка для очистки кэша и сообщение на одной горизонтали -->
+    <div class="card rounded shadow-none mb-3">
+        <div class="d-flex align-items-center p-3">
+            <button id="clearLogButton" class="btn btn-danger ">{{t('Clear Log')}}</button>
+        </div>
+    </div>
+
+    <div class="log-container p-4 border rounded-3 font-monospace overflow-auto shadow">
+        <?php
+            $logger = Logger::getInstance();
+            echo str_replace(["\r\n", "\n", "\r"], '<br>', htmlspecialchars($logger->getLogContent()));
+        ?>
+    </div>
+</div>
+
+<!-- Модальное окно для отображения сообщений об ошибках -->
+<div class="modal fade" id="errorModal" tabindex="-1" aria-labelledby="errorModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="errorModalLabel">{{t('Error')}}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="errorModalBody">
+                <!-- Сообщение об ошибке будет вставлено здесь -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{t('Close')}}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для подтверждения действия -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmModalLabel">{{t('Confirmation')}}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="confirmModalBody">
+                <!-- Сообщение для подтверждения будет вставлено здесь -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{t('Cancel')}}</button>
+                <button type="button" class="btn btn-danger" id="confirmModalYesButton">{{t('Yes')}}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.getElementById('clearLogButton').addEventListener('click', function() {
+        showConfirmModal('{{t('Are you sure you want to clear the log?')}}', function() {
+            fetch('ajax.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRF-TOKEN': csrfToken
+                },
+                body: 'action=clearLog'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showInfoModal('{{t('Log successfully cleared.')}}');
+                    location.reload();
+                } else {
+                    showErrorModal('{{t('Error: ')}}' + data.message);
+                }
+            })
+            .catch(error => showErrorModal('{{t('Error: ')}}' + error.message));
+        });
+    });
+
+    function showErrorModal(message) {
+        document.getElementById('errorModalBody').innerText = message;
+        var errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+        errorModal.show();
+    }
+
+    function showInfoModal(message) {
+        document.getElementById('errorModalBody').innerText = message;
+        var infoModal = new bootstrap.Modal(document.getElementById('errorModal'));
+        infoModal.show();
+    }
+
+    function showConfirmModal(message, onConfirm) {
+        document.getElementById('confirmModalBody').innerText = message;
+        var confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+        document.getElementById('confirmModalYesButton').onclick = function() {
+            confirmModal.hide();
+            onConfirm();
+        };
+        confirmModal.show();
+    }
+</script>
+
+{{template footer.htm}}
