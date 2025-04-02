@@ -444,7 +444,7 @@ def upload_with_progress(
             ftp.login(FTP_USER, FTP_PASS)
 
         with open(local_path, "rb") as f:
-            if filesize > 102400:
+            if filesize > MIN_FILESIZE_FOR_PROGRESSBAR:
                 log("SUCCESS", f"Загрузка {os.path.basename(local_path)} начата...")
 
                 pbar = tqdm(
