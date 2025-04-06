@@ -17,7 +17,7 @@ REMOTE_DIR = r"/"  # Целевая директория на сервере
 LOCAL_DIR = r"."  # Локальная директория для загрузки
 
 # Настройки исключений
-EXCLUDED_EXTENSIONS = r" .lnk, .py , .rar"  # Расширения файлов для исключения
+EXCLUDED_EXTENSIONS = r" .lnk, .py , .rar"  # Исключаемые расширения файлов
 EXCLUDED_FILES_DIRS = r" .git,.vscode.,cache, includes\temp "  # Исключаемые файлы и директории
 ENCODING = r"cp1251"  # Кодировка ftp сервера для соединения
 
