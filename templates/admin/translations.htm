@@ -206,7 +206,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.success) {
                     originalKeyGroup.style.display = 'flex';
                     originalKeyInput.value = data.key;
-                    generateTranslationForms(data.key);
+                    generateTranslationForms(text, data.key);
                 } else {
                     originalKeyGroup.style.display = 'none';
                     originalKeyInput.value = '';
@@ -254,7 +254,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         var originalKey = document.getElementById('originalKey').value;
-        var textToSave = originalKey || originalText;
+        var textToSave = originalText;
 
         var card = document.querySelector('input[data-lang="' + lang + '"]').closest('.card');
         var saveBtn = card.querySelector('.save-translation');
@@ -277,6 +277,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         setTimeout(function() {
                             successIcon.classList.add('d-none');
                         }, 2000);
+                        // Сервер убрал ключ из списка отсутствующих, обновляем таблицу без перезагрузки страницы
+                        loadMissingTranslations();
                     } else {
                         alert(data.message || '{{t("Failed to save translation")}}');
                     }
@@ -322,7 +324,7 @@ document.addEventListener('DOMContentLoaded', function() {
      * @param {string} sourceText - Исходный текст для перевода
      * @returns {void}
      */
-    function generateTranslationForms(sourceText) {
+    function generateTranslationForms(sourceText, lookupKey) {
         // Если нет текста, не создаем формы
         if (!sourceText.trim()) {
             const existingContainer = document.getElementById('translations-container');
@@ -335,7 +337,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Получаем оригинальный ключ, если есть
         const originalKey = document.getElementById('originalKey').value;
-        const textToUse = originalKey || sourceText;
+        const textToUse = sourceText;
         
         validLanguages.forEach(lang => {
             const translation = translationTemplate.content.cloneNode(true);
@@ -402,11 +404,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'X-CSRF-Token': window.csrfToken
                 },
-                body: `action=get_translation&key=${encodeURIComponent(textToUse)}&lang=${encodeURIComponent(lang)}`
+                body: `action=get_translation&key=${encodeURIComponent(lookupKey || textToUse)}&lang=${encodeURIComponent(lang)}`
             })
             .then(response => response.json())
             .then(data => {
-                if (data.success && data.translation) {
+                if (data.success && data.translation && data.translation !== "[" + (lookupKey || textToUse) + "]") {
                     input.value = data.translation;
                 }
             })
@@ -504,7 +506,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.success) {
                     originalKeyGroup.style.display = 'flex';
                     originalKeyInput.value = data.key;
-                    generateTranslationForms(data.key);
+                    generateTranslationForms(trimmedText, data.key);
                 } else {
                     originalKeyGroup.style.display = 'none';
                     originalKeyInput.value = '';

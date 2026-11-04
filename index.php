@@ -21,6 +21,11 @@ Translator::configure(
     $cmsConfig['validLanguages'], // Список допустимых языков
     $ACTIVE_LANGUAGE // Основной язык
 );
+// Функция перевода, которая возвращает текст
+function t($key)
+{
+    return Translator::translate($key); // Возвращает переведенное значение
+}
 
 // Определяем тип хранилища
 $storageType = $cmsConfig['storage'];

@@ -1,23 +1,5 @@
 <?php
 
-/**
- * Класс Translator:
- * 1. configure - Настройка конфигурации переводчика.
- * 2. getInstance - Получение экземпляра класса.
- * 3. validateLanguage - Проверка валидности языкового кода.
- * 4. loadTranslations - Загрузка переводов для указанного языка.
- * 5. loadMissingTranslations - Загрузка списка отсутствующих переводов.
- * 6. translate - Получение перевода по ключу.
- * 7. manageTranslations - Управление переводами (получение/обновление/удаление/добавление).
- * 8. manageMissing - Управление списком отсутствующих переводов.
- * 9. removeMissing - Удаление ключа из списка отсутствующих переводов.
- * 10. getMissingTranslations - Получение списка отсутствующих переводов.
- * 11. getValidLanguages - Получение списка поддерживаемых языков.
- * 12. getCurrentLanguage - Получение текущего активного языка.
- * 13. findOriginalKey - Поиск ключа по значению перевода.
- * 14. t - Функция для упрощенного доступа к переводу.
- */
-
 class Translator
 {
     private static $instance = null;
@@ -97,13 +79,13 @@ class Translator
         $this->missing = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
     }
 
-    /**
-     * Получение перевода по ключу
-     * @param string $key Ключ перевода
-     * @param string|null $lang Код языка
-     * @param bool $trackMissing Добавлять ли отсутствующий перевод в список (по умолчанию true)
-     * @return string Переведенный текст или ключ в квадратных скобках
-     */
+/**
+ * Получение перевода по ключу
+ * @param string $key Ключ перевода
+ * @param string|null $lang Код языка
+ * @param bool $trackMissing Добавлять ли отсутствующий перевод в список (по умолчанию true)
+ * @return string Переведенный текст или ключ в квадратных скобках
+ */
     public static function translate($key, $lang = null, $trackMissing = true)
     {
         $instance = self::getInstance($lang);
@@ -154,24 +136,20 @@ class Translator
             return false;
         }
 
-        $file = self::$config['langDir'] . DIRECTORY_SEPARATOR . $lang . '.json';
+        $file         = self::$config['langDir'] . DIRECTORY_SEPARATOR . $lang . '.json';
+        $translations = file_exists($file) ?
+        json_decode(file_get_contents($file), true) ?: []: [];
 
-        // Проверяем, существует ли файл с переводами
-        $translations = file_exists($file)
-            ? (json_decode(file_get_contents($file), true) ?: [])
-            : [];
-
-        // комады обновления/удаления/добавления
         switch ($action) {
-            case 'get': // Возвращаем все переводы
+            case 'get':
                 return $translations;
-            case 'update': // Обновляем перевод по ключу
+            case 'update':
                 $translations[$key] = $newValue;
                 break;
-            case 'delete': // Удаляем перевод по ключу
+            case 'delete':
                 unset($translations[$key]);
                 break;
-            case 'add': // Добавляем новый перевод
+            case 'add':
                 if (! isset($translations[$key])) {
                     $translations[$key] = $newValue;
                 } else {
@@ -180,10 +158,8 @@ class Translator
                 break;
         }
 
-        return file_put_contents(
-            $file,
-            json_encode($translations, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-        ) !== false;
+        return file_put_contents($file,
+            json_encode($translations, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) !== false;
     }
 
     /**
@@ -230,8 +206,7 @@ class Translator
                     return false;
                 }
                 $key           = trim($key);
-                $this->missing = array_values(array_filter(
-                    $this->missing,
+                $this->missing = array_values(array_filter($this->missing,
                     function ($entry) use ($key) {
                         return strtolower(trim($entry)) !== strtolower($key);
                     }
@@ -258,10 +233,8 @@ class Translator
      */
     private function removeMissing($key)
     {
-        $this->missing = array_filter(
-            $this->missing,
-            fn($entry) => strtolower(trim($entry)) !== strtolower(trim($key))
-        );
+        $this->missing = array_filter($this->missing,
+            fn($entry) => strtolower(trim($entry)) !== strtolower(trim($key)));
 
         $file = self::$config['langDir'] . DIRECTORY_SEPARATOR . self::$config['missingFile'];
         file_put_contents($file, implode(PHP_EOL, $this->missing) .
@@ -329,14 +302,5 @@ class Translator
 
         return null;
     }
-}
 
-// Функция перевода
-// $key - Слово для перевода (строка)
-// $lang - Язык для перевода (по умолчанию null, используется текущий язык при инициализации Translator)
-// $trackMissing - добавлять отсутствующий перевод в список отсутствуших переводов (по умолчанию true добавляет)
-// Возвращает переведенный текст или ключ в квадратных скобках, если перевод не найден
-function t($key, $lang = null, $trackMissing = true)
-{
-    return Translator::translate($key, $lang, $trackMissing);
 }

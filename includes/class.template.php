@@ -1,14 +1,4 @@
 <?php
-/**
- * Класс Template:
- * 1. getInstance($config = []) - Получение единственного экземпляра класса (Singleton).
- * 2. getTemplateConfig() - Возвращает текущую конфигурацию шаблонов.
- * 3. compile($tplName) - Компилирует указанный шаблон и возвращает путь к скомпилированному файлу.
- * 4. clearCache() - Очищает директорию кэша шаблонов.
- * 5. joinPaths(...$parts) - Объединяет части пути в корректный путь с учетом разделителей.
- * 6. parse($tpl) - Парсит шаблонный файл, заменяя конструкции {тег} на соответствующий PHP-код.
- * 7. template($page) - Статическая обертка для компиляции шаблона.
- */
 
 //require_once 'includes/jsmin-1.1.2.php';
 //require_once 'includes/CSSMin-0.0.1.php';
@@ -29,7 +19,16 @@ require_once 'includes/matthiasmullie_minify/src/PathConverter/Converter.php';
 use MatthiasMullie\Minify\CSS; // Подключаем класс CSS для минификации CSS
 use MatthiasMullie\Minify\JS; // Подключаем класс JS для минификации JS
 
-
+/**
+ * Класс Template:
+ * 1. getInstance($config = []) - Получение единственного экземпляра класса (Singleton).
+ * 2. getTemplateConfig() - Возвращает текущую конфигурацию шаблонов.
+ * 3. compile($tplName) - Компилирует указанный шаблон и возвращает путь к скомпилированному файлу.
+ * 4. clearCache() - Очищает директорию кэша шаблонов.
+ * 5. joinPaths(...$parts) - Объединяет части пути в корректный путь с учетом разделителей.
+ * 6. parse($tpl) - Парсит шаблонный файл, заменяя конструкции {тег} на соответствующий PHP-код.
+ * 7. template($page) - Статическая обертка для компиляции шаблона.
+ */
 
 class Template
 {

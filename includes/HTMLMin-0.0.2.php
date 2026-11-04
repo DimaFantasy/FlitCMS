@@ -1,34 +1,10 @@
 <?php
 
-class HTMLMin
-{
-    public static function minify($html)
-    {
+class HTMLMin {
+    public static function minify($html) {
         // Убираем HTML-комментарии (кроме условных комментариев для IE и сохраненных блоков BLOCK_[0-9a-f])
         $html = preg_replace('/<!--(?!\[if.*?\]|\s*BLOCK_\w+).*?-->/s', '', $html);
-
-        // Убираем пробелы и переносы строк до и после HTML-комментариев
-        $html = preg_replace_callback(
-            // Регулярное выражение для поиска HTML-комментариев
-            '/([^>]*)<!--(.*?)-->([^<]*)/iu', 
-            function ($matches) {
-                // $matches[1] - все до комментария (включая пробелы)
-                // $matches[2] - сам комментарий (всё, что между <!-- и -->)
-                // $matches[3] - всё после комментария (включая пробелы)
-        
-                // Заменяем несколько пробелов в начале содержимого до комментария
-                $before = preg_replace('/\s+/', ' ', $matches[1]);
-        
-                // Заменяем несколько пробелов после комментария
-                $after = preg_replace('/\s+/', ' ', $matches[3]);
-        
-                // Возвращаем строку, в которой пробелы до и после комментария заменены на одиночные
-                return $before . '<!--' . $matches[2] . '-->' . $after;
-            },
-            $html
-        );
-
-        // Убираем лишние пробелы и переносы строк везде
+        // Убираем лишние пробелы и переносы строк
         // $html = preg_replace('/\s{2,}/', ' ', $html);
         // Тоже работает
         // Убираем пробелы между закрывающими и открывающими тегами
@@ -63,42 +39,51 @@ class HTMLMin
 
         // Обработка HTML
         $html = preg_replace_callback(
-            '/(\s*)(<\s*(\/?)(' . $blockTags . ')\s*(?:\s+([^>]*))?\s*(\/?)\s*>)([^<]+)/iu',
-            function ($matches) use ($whiteSpaceTags, $tagsWithSpaces) {
-                // $matches[0] - Полное совпадение с регулярным выражением (весь найденный фрагмент)
-                // $matches[1] - Пробелы перед тегом (если есть)
-                // $matches[2] - Полный тег (например, "<div>", "<p class='text'>")
-                // $matches[3] - Символ закрытия тега "/" для закрывающих тегов (например, в "</div>")
-                // $matches[4] - Имя тега (например, "div", "p", "span")
-                // $matches[5] - Атрибуты тега (если есть, например, "class='text' id='main'")
-                // $matches[6] - Символ самозакрывающегося тега "/" (например, в "<br />")
-                // $matches[7] - Содержимое после тега до следующего "<" (например, текст внутри тега)
+            '/(\s*)(<\s*(\/?)('.$blockTags.')\s*(?:\s+([^>]*))?\s*(\/?)\s*>)([^<]+)/iu',
+            function($matches) use ($whiteSpaceTags, $tagsWithSpaces) {
                 $tag = $matches[2]; // Полный тег
                 $closingTag = $matches[3]; // Символ закрытия
                 $tagName = $matches[4]; // Имя тега
-                $content = $matches[7] ?? ''; // Содержимое после тега (если есть)
+                $selfClosing = $matches[6]; // Символ для самозакрывающегося тега
+
+                // Проверяем, есть ли пробелы в начале и в конце
+                $hasLeadingSpaces = !empty($matches[1]);
+                $hasTrailingSpaces = !empty($matches[7]);
 
                 // Если тег в списке для удаления пробелов и переносов в настройках тега
-                if (preg_match('/\b(' . $whiteSpaceTags . ')\b/', $tagName)) {
+                if (preg_match('/\b('.$whiteSpaceTags.')\b/', $tagName)) {
                     // Удаляем пробелы и переносы строк внутри тега
                     $tag = preg_replace('/\s+/', ' ', $tag);
                 }
 
                 // Если тег закрыт или в списке для удаления пробелов после тегов
-                if (!empty($closingTag) || preg_match('/\b(' . $tagsWithSpaces . ')\b/', $tagName)) {
-                    // Меняем все пробелы и переносы строк на один пробел
-                    $content = preg_replace('/\s+/', ' ', $content);
-                    return $tag . $content; // Возвращаем с изменённым содержимым
+                if (!empty($closingTag) || preg_match('/\b('.$tagsWithSpaces.')\b/', $tagName)) {
+                    // Если есть пробелы или переносы строк в конце тега, убираем их
+                    if ($hasTrailingSpaces) {
+                        // Меняем все пробелы и переносы строк на один пробел
+                        $content = preg_replace('/\s+/', ' ', $matches[7]);
+                        return $tag . $content; // Возвращаем с изменённым содержимым
+                    }
+                } else {   // Если тег открыт, и не в списке
+                    return $tag . $matches[7]; // Оставляем без изменений
                 }
 
-                // Оставляем без изменений
-                return $tag . $content;
+                // Если не попали в условия, возвращаем исходный тег
+                return $tag;
             },
             $html
         );
-        // Убираем пробелы между тегами, если они не в списке для удаления пробелов и переносов в настройках тега
-        return trim($html); // обрезаем концы и возвращяем
-     
+
+        $html = preg_replace_callback(
+            '/([^>]*)<!--(.*?)-->([^<]*)/iu',
+            function ($matches) {
+                $before = preg_replace('/\s+/', ' ', $matches[1]);
+                $after = preg_replace('/\s+/', ' ', $matches[3]);
+                return $before . '<!--' . $matches[2] . '-->' . $after;
+            },
+            $html
+        );
+
         /*
         Тоже работает но страница должна быть цельная dom не целые элементы удаляет максимум оставит в конце </body></html>
         $dom = new DOMDocument('1.0', 'UTF-8');
@@ -137,5 +122,9 @@ class HTMLMin
         // Декодируем HTML-сущности, если нужно
         $html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         */
+        return trim($html); // обрезаем концы и возвращяем
     }
 }
+
+
+

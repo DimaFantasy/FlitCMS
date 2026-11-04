@@ -1,24 +1,6 @@
 <?php
 
-/**
- * Класс User:
- * 1. __construct($storage, $tableName, $sessionKey, $sessionLifetime, $cookieName) - Конструктор класса, инициализация параметров.
- * 2. register($userData, $autoLogin) - Регистрация пользователя.
- * 3. login($email, $password) - Авторизация пользователя.
- * 4. logout() - Выход пользователя.
- * 5. isLoggedIn() - Проверка авторизации.
- * 6. setSession($userData) - Установка данных в сессию.
- * 7. getCurrentUser() - Получение данных текущего пользователя.
- * 8. getCurrentUserRole() - Получение роли текущего пользователя.
- * 9. isCurrentRole($role) - Проверка роли текущего пользователя.
- * 10. getUserByEmail($email) - Получение данных пользователя по email.
- * 11. getAllUsers() - Получение списка всех пользователей.
- * 12. deleteUser($email) - Удаление пользователя по email.
- * 13. updateRecord($conditions, $dataUpdate) - Обновление записей пользователей.
- */
-
-enum RegistrationStatus
-{
+enum RegistrationStatus {
     case SUCCESS_WITH_LOGIN;    // Успешная регистрация и вход
     case SUCCESS_WITHOUT_LOGIN; // Успешная регистрация без входа
     case EMAIL_EXISTS;          // Email уже зарегистрирован
@@ -38,18 +20,16 @@ class User
     /** @var int|null $sessionLifetime Время жизни сессии в секундах (-1 — бесконечность, 0 — до закрытия браузера) */
     private $sessionLifetime;
 
-    public function __construct(
-        BaseTableStorage $storage,
+    public function __construct(BaseTableStorage $storage,
         string $tableName = 'users',
         string $sessionKey = 'user_data',
         $sessionLifetime = '-1',
-        $cookieName = 'LIVE_ID'
-    ) {
+        $cookieName = 'LIVE_ID') {
         $this->storage    = $storage;    // Инициализация хранилища данных
         $this->tableName  = $tableName;  // Установка имени таблицы пользователей
         $this->sessionKey = $sessionKey; // Ключ для хранения данных в сессии
 
-        // Проверка на пустое значение sessionLifetime и установка значения по умолчанию
+                                                                                                                     // Проверка на пустое значение sessionLifetime и установка значения по умолчанию
         $this->sessionLifetime = (isset($sessionLifetime) && $sessionLifetime !== '') ? (int) $sessionLifetime : -1; // Если пусто, то -1 (бесконечность)
 
         if (! headers_sent() && session_status() === PHP_SESSION_NONE) {
@@ -97,13 +77,13 @@ class User
         }
     }
 
-    /**
-     * Регистрация пользователя.
-     *
-     * @param array $userData Данные пользователя (email, password и т.д.).
-     * @param bool $autoLogin Автоматически войти после регистрации (по умолчанию true).
-     * @return RegistrationStatus Статус регистрации.
-     */
+/**
+ * Регистрация пользователя.
+ *
+ * @param array $userData Данные пользователя (email, password и т.д.).
+ * @param bool $autoLogin Автоматически войти после регистрации (по умолчанию true).
+ * @return RegistrationStatus Статус регистрации.
+ */
     public function register(array $userData, bool $autoLogin = true): RegistrationStatus
     {
         try {
@@ -139,6 +119,7 @@ class User
                 logMessage('Пользователь успешно зарегистрирован: ' . $userData['email'], 'INFO');
                 return RegistrationStatus::SUCCESS_WITHOUT_LOGIN;
             }
+
         } catch (Exception $e) {
             logMessage('Неизвестная ошибка при регистрации: ' . $e->getMessage(), 'ERROR');
             return RegistrationStatus::UNKNOWN_ERROR;
@@ -160,7 +141,7 @@ class User
                 return false;
             }
 
-            // Берем первого пользователя из массива (предполагаем, что email уникален)
+                                   // Берем первого пользователя из массива (предполагаем, что email уникален)
             $user = reset($users); // Берем первого пользователя из массива
 
             // Проверяем, совпадает ли введенный пароль с хешем пароля из базы данных
@@ -221,13 +202,13 @@ class User
         ];
 
         if ($this->sessionLifetime === -1) {
-            // "Вечная" кука: 10 лет от текущего момента
+                                                         // "Вечная" кука: 10 лет от текущего момента
             $expiration = time() + 10 * 365 * 24 * 3600; // 10 лет в секундах
         } elseif ($this->sessionLifetime === 0) {
             // Сессионная кука: удаляется при закрытии браузера
             $expiration = 0;
         } else {
-            // Время жизни в часах
+                                                                  // Время жизни в часах
             $expiration = time() + $this->sessionLifetime * 3600; // Переводим часы в секунды
         }
 
@@ -392,4 +373,5 @@ class User
             return 0;
         }
     }
+
 }

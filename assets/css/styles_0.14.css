@@ -1,0 +1,71 @@
+.grayscale {
+    filter: grayscale(100%);
+}
+
+.custom-link {
+    display: block;
+    padding: 4px 8px;  /* Уменьшаем отступы сверху и снизу */
+    border-radius: 5px;
+    text-decoration: none;
+    text-align: center;
+    font-size: 0.9rem; /* Можно слегка уменьшить размер шрифта */
+}
+
+[data-bs-theme="dark"] .custom-link-stat {
+    background-color: #00095C !important; /* Синий */
+    color: #b0b0b0 !important;
+}
+[data-bs-theme="dark"] .custom-link-info {
+    background-color: #036807 !important; /* Зелёный */
+    color: #b0b0b0 !important;
+}
+[data-bs-theme="dark"] .custom-link-edit {
+    background-color: #610002 !important; /* Красный */
+    color: #b0b0b0 !important;
+}
+
+[data-bs-theme="light"] .custom-link-stat {
+    background-color: #cce5ff !important; /* Светло-синий */
+    color: black !important;
+}
+[data-bs-theme="light"] .custom-link-info {
+    background-color: #d4edda !important; /* Светло-зелёный */
+    color: black !important;
+}
+[data-bs-theme="light"] .custom-link-edit {
+    background-color: #f8d7da !important; /* Светло-красный */
+    color: black !important;
+}
+
+    .container {
+        max-width: 1200px;
+        margin: auto;
+    }
+
+    .d-flex {
+        display: flex;
+        justify-content: center;
+    }
+
+    .flex-wrap {
+        flex-wrap: wrap;
+    }
+
+    .box {
+        width: calc(50% - 10px); /* Два блока в ряд */
+        height: 100px;
+        background-color: lightgray;
+        margin: 5px;
+        border: 1px solid gray;
+    }
+
+    .wide {
+        width: 100%; /* Широкий блок */
+    }
+
+    /* Если экран слишком узкий, все блоки в столбик */
+    @media (max-width: 600px) {
+        .box {
+            width: 100%;
+        }
+    }

@@ -1,7 +1,6 @@
 <?php
-// Определяем константу для защиты от прямого доступа к файлам
+// Защита от прямого доступа
 define('BOARD', true);
-// Устанавливаем путь к корневой директории
 define('BOARD_ROOT', __DIR__);
 
 // Подключение зависимостей
@@ -21,6 +20,18 @@ Translator::configure(
     $cmsConfig['validLanguages'], // Список допустимых языков
     $lang  // Язык
 );
+
+/**
+ * Функция перевода, возвращает значение
+ * @param string $key Ключ перевода
+ * @param string|null $lang Код языка
+ * @param bool $trackMissing Добавлять ли отсутствующий перевод в список (по умолчанию true)
+ * @return string Переведенный текст или ключ в квадратных скобках
+ */
+function t($key, $lang = null, $trackMissing = true)
+{
+    return Translator::translate($key, $lang, $trackMissing);
+}
 
 // Определяем тип хранилища
 $storageType = $cmsConfig['storage'];
@@ -120,6 +131,7 @@ function handleAction($action, $user, $storage)
             case 'get_all_users':
                 $response = getAllUsers($user);
                 break;
+
 
             // Получение списка отсутствующих переводов
             case 'get_missing_translations':
@@ -613,6 +625,16 @@ function saveTranslation()
         }
 
         if ($result) {
+            // Убираем ключ из списка «Не найденные переводы»
+            // Убираем из «Не найденные переводы», только если ключ уже есть во ВСЕХ языках
+            $allDone = true;
+            foreach (Translator::getValidLanguages() as $l) {
+                $tr = $translator->manageTranslations('get', $l);
+                if (!is_array($tr) || !isset($tr[$key])) { $allDone = false; break; }
+            }
+            if ($allDone) {
+                $translator->manageMissing('delete', $key);
+            }
             return [
                 'success' => true,
                 'message' => t('Translation saved successfully')
