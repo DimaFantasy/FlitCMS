@@ -1,84 +1,9 @@
 <?php
 
 /**
- * Мониторинг системных ресурсов
- * 
- * Этот файл содержит функции для получения информации о загрузке
- * системы (CPU и памяти) для Windows и Linux систем
- * 
- * @version 1.0
+ * Мониторинг системных ресурсов (CPU и память) для Windows и Linux.
+ * Доступен только администратору. Отдаёт JSON: {"used_memory": МБ, "cpu": %}.
  */
-
-/**
- * Получает статистику использования ресурсов для Windows систем
- * 
- * @return array Массив с данными:
- *               - used_memory (float) Использованная память в МБ
- *               - cpu (float) Загрузка процессора в процентах
- */
-function getWindowsStats()
-{
-    // Получаем загрузку процессора с помощью PowerShell
-    $cpuLoad = shell_exec("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command \"Get-CimInstance -ClassName Win32_Processor | Select-Object LoadPercentage\"");
-
-    // Парсим вывод и извлекаем процент загрузки процессора
-    preg_match('/\d+/', $cpuLoad, $cpuLoadMatches);
-    $cpuLoad = isset($cpuLoadMatches[0]) ? (int)$cpuLoadMatches[0] : 0;
-
-    // Получаем использование памяти с помощью PowerShell
-    $memInfo = shell_exec("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command \"Get-CimInstance -ClassName Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize\"");
-
-    // Парсим вывод и извлекаем значения
-    preg_match_all('/\d+/', $memInfo, $matches);
-
-    // Получаем общее количество и свободное количество памяти в килобайтах
-    $totalMemKb = isset($matches[0][1]) ? $matches[0][1] : 0; // Общее количество памяти в KB
-    $freeMemKb = isset($matches[0][0]) ? $matches[0][0] : 0;  // Свободная память в KB
-
-    // Вычисляем занятую память в мегабайтах
-    $usedMemMb = ($totalMemKb - $freeMemKb) / 1024; // Занятая память в MB
-
-    return [
-        'used_memory' => round($usedMemMb, 2),
-        'cpu' => round($cpuLoad, 2)
-    ];
-}
-
-/**
- * Получает статистику использования ресурсов для Linux систем
- * 
- * @return array Массив с данными:
- *               - used_memory (float) Использованная память в МБ
- *               - cpu (float) Загрузка процессора в процентах
- */
-function getLinuxStats()
-{
-    // Получаем данные о памяти через команду free
-    $memInfo = shell_exec('free -b');  // Получаем данные в байтах
-
-    // Разбираем строку с использованием регулярного выражения
-    preg_match('/Mem:\s+(\d+)\s+(\d+)\s+(\d+)/', $memInfo, $matches);
-
-    // Получаем общую, используемую и свободную память
-    if (count($matches) < 3) {
-        return ['used_memory' => 0, 'cpu' => 0];
-    }
-    $totalMem = $matches[1] / 1024 / 1024;  // Преобразуем в MB
-    $usedMem = $matches[2] / 1024 / 1024;
-
-    // Получаем загрузку процессора через команду top (для однократного обновления)
-    $cpuLoadInfo = shell_exec('top -bn1 | grep "Cpu(s)"');
-
-    // Извлекаем значение загрузки процессора
-    preg_match('/(\d+\.\d+)\s*id/', $cpuLoadInfo, $cpuMatches);
-    $cpuIdle = isset($cpuMatches[1]) ? (float)$cpuMatches[1] : 100.0;  // Процент простоя процессора
-    $cpuLoad = 100 - $cpuIdle;  // Загрузка процессора = 100 - idle
-
-    return [
-        'used_memory' => round($usedMem, 2),
-        'cpu' => round($cpuLoad, 2)
-    ];
-}
 
 // Доступ только администратору (проверка по хранилищу, а не по роли в сессии)
 define('BOARD', true);
@@ -120,18 +45,76 @@ if (!$allowed) {
     exit;
 }
 
-// Файл публичный, а каждый вызов запускает системные команды (top / PowerShell).
-// Чтобы им нельзя было нагрузить сервер, результат кэшируется на 5 секунд.
-$cacheFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'flitcms_stats_' . md5(__DIR__) . '.json';
-if (is_file($cacheFile) && (time() - filemtime($cacheFile)) < 5) {
-    $cached = @file_get_contents($cacheFile);
-    if ($cached !== false && json_decode($cached) !== null) {
-        echo $cached;
-        exit;
+/**
+ * Windows: один вызов PowerShell (медленный старт) возвращает загрузку CPU и память.
+ * Скрипт передаётся через -EncodedCommand, чтобы не мучиться с кавычками.
+ */
+function getWindowsStats()
+{
+    $script = '$c=(Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name=\'_Total\'").PercentProcessorTime;'
+        . 'if($c -eq $null){$c=(Get-CimInstance Win32_Processor|Measure-Object LoadPercentage -Average).Average};'
+        . '$o=Get-CimInstance Win32_OperatingSystem;'
+        . 'Write-Output ("{0};{1};{2}" -f $c,$o.TotalVisibleMemorySize,$o.FreePhysicalMemory)';
+    // -EncodedCommand = base64 от UTF-16LE (скрипт только из ASCII, поэтому достаточно добавить нулевые байты)
+    $encoded = base64_encode(implode("\0", str_split($script)) . "\0");
+    $out = (string)shell_exec('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -EncodedCommand ' . $encoded);
+
+    $parts = explode(';', trim(str_replace(',', '.', $out)));
+    if (count($parts) < 3) {
+        return ['used_memory' => 0, 'cpu' => 0];
     }
+    $cpu = max(0, min(100, (float)$parts[0]));
+    $usedMemMb = ((float)$parts[1] - (float)$parts[2]) / 1024; // KB -> MB
+
+    return ['used_memory' => round($usedMemMb, 2), 'cpu' => round($cpu, 2)];
 }
 
-// Определяем текущую операционную систему и получаем соответствующую статистику
+/**
+ * Linux: снимок счётчиков CPU из /proc/stat -> [простой, всего]
+ */
+function readCpuTimes()
+{
+    $line = @file('/proc/stat', FILE_IGNORE_NEW_LINES);
+    if (!$line || strpos($line[0], 'cpu ') !== 0) {
+        return null;
+    }
+    $v = array_map('floatval', preg_split('/\s+/', trim(substr($line[0], 4))));
+    // user nice system idle iowait irq softirq steal
+    $idle  = ($v[3] ?? 0) + ($v[4] ?? 0);
+    $total = array_sum(array_slice($v, 0, 8));
+    return [$idle, $total];
+}
+
+function getLinuxStats()
+{
+    // Память: used из `free -b`
+    $memInfo = (string)shell_exec('LC_ALL=C free -b');
+    if (!preg_match('/Mem:\s+(\d+)\s+(\d+)/', $memInfo, $m)) {
+        return ['used_memory' => 0, 'cpu' => 0];
+    }
+    $usedMem = $m[2] / 1024 / 1024; // MB
+
+    // CPU: два снимка /proc/stat с паузой 300 мс - это именно ТЕКУЩАЯ загрузка.
+    // (`top -bn1` даёт среднее с момента запуска системы, а на локали с запятой ещё и не разбирается)
+    $cpuLoad = null;
+    $a = readCpuTimes();
+    if ($a) {
+        usleep(300000);
+        $b = readCpuTimes();
+        if ($b && $b[1] > $a[1]) {
+            $cpuLoad = 100 * (1 - ($b[0] - $a[0]) / ($b[1] - $a[1]));
+        }
+    }
+    if ($cpuLoad === null) { // запасной вариант: второй замер top (первый - среднее с запуска)
+        $top = (string)shell_exec('LC_ALL=C top -bn2 -d 0.5 | grep "Cpu(s)" | tail -1');
+        $cpuLoad = preg_match('/([\d.]+)\s*id/', $top, $c) ? 100 - (float)$c[1] : 0;
+    }
+    $cpuLoad = max(0, min(100, $cpuLoad));
+
+    return ['used_memory' => round($usedMem, 2), 'cpu' => round($cpuLoad, 2)];
+}
+
+// Определяем ОС и получаем статистику
 $stats = ['used_memory' => 0, 'cpu' => 0];
 if (function_exists('shell_exec') && stripos((string)ini_get('disable_functions'), 'shell_exec') === false) {
     try {
@@ -141,8 +124,4 @@ if (function_exists('shell_exec') && stripos((string)ini_get('disable_functions'
     }
 }
 
-$json = json_encode($stats);
-@file_put_contents($cacheFile, $json, LOCK_EX);
-
-// Выводим результат в формате JSON
-echo $json;
+echo json_encode($stats);
