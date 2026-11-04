@@ -188,6 +188,41 @@ class User
             $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
             // logMessage('CSRF-токен успешно сгенерирован.', 'INFO');
         }
+
+        // Сессия должна соответствовать текущей записи пользователя в хранилище
+        $this->validateSession();
+    }
+
+    /**
+     * Отпечаток пароля для привязки сессии (сам хеш в сессию не кладём).
+     */
+    private function pwFingerprint(array $rec): string
+    {
+        return hash('sha256', (string)($rec['password'] ?? ''));
+    }
+
+    /**
+     * Сбрасывает сессию, если пользователь удалён или у него сменился пароль;
+     * имя и роль в сессии обновляет из хранилища.
+     */
+    private function validateSession(): void
+    {
+        $s = $_SESSION[$this->sessionKey] ?? null;
+        if (! is_array($s)) {
+            return;
+        }
+        try {
+            $found = $this->storage->getRecordsByColumn($this->tableName, 'email', (string)($s['email'] ?? ''), false);
+        } catch (Throwable $e) {
+            return; // хранилище недоступно - не выкидываем всех пользователей
+        }
+        $rec = empty($found) ? null : reset($found);
+        if (! is_array($rec) || ! hash_equals($this->pwFingerprint($rec), (string)($s['pv'] ?? ''))) {
+            unset($_SESSION[$this->sessionKey]);
+            return;
+        }
+        $_SESSION[$this->sessionKey]['name'] = $rec['name'] ?? $s['name'];
+        $_SESSION[$this->sessionKey]['role'] = $rec['role'] ?? $s['role'];
     }
 
 /**
@@ -344,6 +379,7 @@ class User
             'email' => $userData['email'],
             'name'  => $userData['name'],
             'role'  => $userData['role'], // Добавляем роль
+            'pv'    => $this->pwFingerprint($userData), // отпечаток пароля: при смене пароля сессия станет недействительной
         ];
 
         if ($this->sessionLifetime === -1) {

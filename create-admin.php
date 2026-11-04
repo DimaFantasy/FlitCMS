@@ -19,7 +19,24 @@ header('Referrer-Policy: no-referrer');
 require_once 'includes/class.logger.php';
 require_once 'includes/class.user.php';
 require_once 'includes/class.database.php';
+require_once 'includes/class.translator.php';
 $cmsConfig = require 'config/config.inc.php';
+
+// Язык: кука из конфигурации, но только из списка validLanguages (как на сайте)
+$validLangs = array_values(array_filter(array_map('trim', explode(',', (string)$cmsConfig['validLanguages']))));
+$activeLang = (string)($_COOKIE[$cmsConfig['langCookieName']] ?? '');
+if (!in_array($activeLang, $validLangs, true)) {
+    $activeLang = $cmsConfig['defaultLanguage'];
+}
+Translator::configure(
+    $cmsConfig['langDir'],
+    $cmsConfig['missingTranslationsFileName'],
+    $cmsConfig['validLanguages'],
+    $activeLang
+);
+function t($key) { return Translator::translate($key); }
+/** Перевод, экранированный для вывода в HTML */
+function e($key): string { return htmlspecialchars(t($key), ENT_QUOTES, 'UTF-8'); }
 
 try {
     if ($cmsConfig['storage'] === 'mysql') {
@@ -33,7 +50,7 @@ try {
 } catch (Throwable $e) {
     logMessage('create-admin.php: ' . $e->getMessage(), 'ERROR');
     http_response_code(503);
-    exit('Хранилище недоступно. Проверьте config/config.inc.php и журнал log/app.log.');
+    exit(t('Storage unavailable. Check config/config.inc.php and the log/app.log journal.'));
 }
 
 function h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
@@ -50,11 +67,11 @@ function back(string $self, string $query = ''): void { header('Location: ' . $s
 /** Проверка полей формы; возвращает текст ошибки или null */
 function validateFields(string $email, string $name, string $role, string $password, bool $passwordRequired): ?string
 {
-    if ($email === '' || strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL)) return 'Некорректный email.';
-    if ($name === '' || textLength($name) > 100) return 'Имя обязательно (до 100 символов).';
-    if (!in_array($role, User::ROLES, true)) return 'Недопустимая роль.';
+    if ($email === '' || strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL)) return t('Invalid email address');
+    if ($name === '' || textLength($name) > 100) return t('Name is required (up to 100 characters).');
+    if (!in_array($role, User::ROLES, true)) return t('Invalid role.');
     if (($passwordRequired || $password !== '') && (strlen($password) < 8 || strlen($password) > 72)) {
-        return 'Пароль должен содержать от 8 до 72 символов.';
+        return t('Password must be between 8 and 72 characters');
     }
     return null;
 }
@@ -63,7 +80,7 @@ function validateFields(string $email, string $name, string $role, string $passw
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!hash_equals($token, (string)($_POST['_token'] ?? ''))) {
         http_response_code(403);
-        exit('Недействительный токен формы. Обновите страницу.');
+        exit(t('Invalid form token. Refresh the page.'));
     }
     $action = (string)($_POST['action'] ?? '');
     $email  = strtolower(trim((string)($_POST['email'] ?? '')));
@@ -80,11 +97,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $status = $user->register(['email' => $email, 'password' => $pass, 'name' => $name, 'role' => $role], false);
             if ($status === RegistrationStatus::SUCCESS_WITHOUT_LOGIN) {
                 logMessage("create-admin.php: создан пользователь $email ($role)", 'WARNING');
-                flash('ok', "Создан: $email (" . ($role === 'admin' ? 'администратор' : 'пользователь') . ').');
+                flash('ok', sprintf(t('Created: %s (%s).'), $email, $role === 'admin' ? t('Administrator') : t('Regular user')));
             } elseif ($status === RegistrationStatus::EMAIL_EXISTS) {
-                flash('error', 'Пользователь с таким email уже существует.');
+                flash('error', t('A user with this email already exists.'));
             } else {
-                flash('error', 'Не удалось создать пользователя (см. log/app.log).');
+                flash('error', t('Failed to create user (see log/app.log).'));
             }
             back($self);
         }
@@ -92,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'update') {
             $orig = $user->getUserByEmail(trim((string)($_POST['orig_email'] ?? '')));
             if (!$orig) {
-                flash('error', 'Пользователь не найден.');
+                flash('error', t('User not found.'));
                 back($self);
             }
             if ($err = validateFields($email, $name, $role, $pass, false)) {
@@ -100,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 back($self, '?edit=' . rawurlencode($orig['email']));
             }
             if (strtolower($orig['email']) !== $email && $user->getUserByEmail($email)) {
-                flash('error', 'Другой пользователь уже использует этот email.');
+                flash('error', t('Another user already uses this email.'));
                 back($self, '?edit=' . rawurlencode($orig['email']));
             }
             $upd = ['email' => $email, 'name' => $name, 'role' => $role];
@@ -109,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $user->updateRecord(['email' => $orig['email']], $upd);
             logMessage("create-admin.php: изменён пользователь {$orig['email']} -> $email ($role)", 'WARNING');
-            flash('ok', "Сохранено: $email.");
+            flash('ok', sprintf(t('Saved: %s.'), $email));
             back($self);
         }
 
@@ -117,10 +134,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $rec = $user->getUserByEmail(trim((string)($_POST['email'] ?? '')));
             if ($rec && $user->deleteUser($rec['email'])) {
                 logMessage("create-admin.php: удалён пользователь {$rec['email']}", 'WARNING');
-                flash('ok', "Удалён: {$rec['email']}.");
+                flash('ok', sprintf(t('Deleted: %s.'), $rec['email']));
             } else {
-                flash('error', 'Не удалось удалить пользователя.');
+                flash('error', t('Failed to delete user.'));
             }
+            back($self);
+        }
+
+        if ($action === 'impersonate') {
+            $rec = $user->getUserByEmail(trim((string)($_POST['email'] ?? '')));
+            if (!$rec) {
+                flash('error', t('User not found.'));
+                back($self);
+            }
+            // Вход под выбранным пользователем без пароля (setSession() в User приватный - пишем сессию так же)
+            session_regenerate_id(true);
+            $_SESSION[$cmsConfig['sessionKey']] = [
+                'email' => $rec['email'],
+                'name'  => $rec['name'],
+                'role'  => $rec['role'],
+                'pv'    => hash('sha256', (string)($rec['password'] ?? '')), // как в User::setSession()
+            ];
+            logMessage("create-admin.php: вход под пользователем {$rec['email']}", 'WARNING');
+            flash('ok', sprintf(t('Now you are working as: %s (%s).'), $rec['name'], $rec['email']));
+            back($self);
+        }
+
+        if ($action === 'logout') {
+            $user->logout();
+            flash('ok', t('You have logged out.'));
             back($self);
         }
 
@@ -131,12 +173,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: ' . $base . '/');
                 exit;
             }
-            flash('error', 'Не удалось удалить файл автоматически (нет прав). Удалите create-admin.php вручную через FTP/файловый менеджер.');
+            flash('error', t('Could not delete the file automatically (no permission). Delete create-admin.php manually via FTP or a file manager.'));
             back($self);
         }
     } catch (Throwable $e) {
         logMessage('create-admin.php: ' . $e->getMessage(), 'ERROR');
-        flash('error', 'Внутренняя ошибка (подробности в log/app.log).');
+        flash('error', t('Internal error (details in log/app.log).'));
         back($self);
     }
     back($self);
@@ -156,7 +198,7 @@ if (isset($_GET['edit']) && is_string($_GET['edit'])) {
     $editing = $user->getUserByEmail($_GET['edit']);
 }
 $current = $user->getCurrentUser();
-$roleLabel = fn($r) => strtolower((string)$r) === 'admin' ? 'Администратор' : 'Пользователь';
+$roleLabel = fn($r) => strtolower((string)$r) === 'admin' ? t('Administrator') : t('Regular user');
 $base = rtrim(dirname($self), '/\\') . '/';
 /** Первая буква имени для аватара (работает и без mbstring) */
 function initial($text): string
@@ -165,12 +207,12 @@ function initial($text): string
 }
 $flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info';
 ?><!DOCTYPE html>
-<html lang="ru" data-bs-theme="light">
+<html lang="<?= h($activeLang) ?>" data-bs-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
-    <title>Первый запуск - управление пользователями</title>
+    <title><?= e('First run - user management') ?></title>
     <link rel="icon" type="image/png" href="<?= h($base) ?>favicon.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css" rel="stylesheet">
     <script>
@@ -192,21 +234,38 @@ $flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info
 <div id="warnBanner" class="alert alert-danger rounded-0 border-0 border-bottom border-danger mb-0 sticky-top d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 px-4" role="alert">
     <div class="d-flex align-items-center gap-2">
         <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
-        <strong>Внимание! После завершения настройки удалите файл create-admin.php в целях безопасности!</strong>
+        <strong><?= e('Warning! After setup is complete, delete the create-admin.php file for security!') ?></strong>
     </div>
-    <form method="post" class="m-0" data-confirm="Удалить create-admin.php с сервера? Это действие необратимо." data-confirm-title="Удаление create-admin.php" data-confirm-btn="Удалить файл">
+    <form method="post" class="m-0" data-confirm="<?= e('Delete create-admin.php from the server? This action cannot be undone.') ?>" data-confirm-title="<?= e('Deleting create-admin.php') ?>" data-confirm-btn="<?= e('Delete file') ?>">
         <input type="hidden" name="_token" value="<?= h($token) ?>">
         <input type="hidden" name="action" value="delete_file">
-        <button type="submit" class="btn btn-danger btn-sm fw-bold">Удалить файл</button>
+        <button type="submit" class="btn btn-danger btn-sm fw-bold"><?= e('Delete file') ?></button>
     </form>
 </div>
 
 <!-- Шапка -->
 <nav class="navbar navbar-expand-lg shadow bg-body-tertiary" id="navbar">
     <div class="container-fluid px-4">
-        <span class="navbar-brand">Flit CMS &middot; Первый запуск</span>
+        <span class="navbar-brand">Flit CMS &middot; <?= e('First run') ?></span>
         <div class="d-flex align-items-center gap-2">
-            <span class="badge text-bg-secondary">Хранилище: <?= h($cmsConfig['storage']) ?></span>
+            <?php if ($current): ?>
+                <span class="badge text-bg-<?= strtolower((string)$current['role']) === 'admin' ? 'danger' : 'primary' ?>"><?= e('You') ?>: <?= h($current['name']) ?> (<?= h($current['email']) ?>) &middot; <?= h($roleLabel($current['role'])) ?></span>
+                <form method="post" class="m-0">
+                    <input type="hidden" name="_token" value="<?= h($token) ?>">
+                    <input type="hidden" name="action" value="logout">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm"><?= e('Log out') ?></button>
+                </form>
+            <?php else: ?>
+                <span class="badge text-bg-warning"><?= e('You are not logged in') ?></span>
+            <?php endif; ?>
+            <span class="badge text-bg-secondary"><?= e('Storage') ?>: <?= h($cmsConfig['storage']) ?></span>
+            <?php if (count($validLangs) > 1): ?>
+            <div class="btn-group" role="group">
+                <?php foreach ($validLangs as $lc): ?>
+                    <button type="button" class="btn btn-sm btn-outline-secondary js-lang<?= $lc === $activeLang ? ' active' : '' ?>" data-lang="<?= h($lc) ?>" title="<?= e('Switch to') ?> <?= h(strtoupper($lc)) ?>"<?= $lc === $activeLang ? ' disabled' : '' ?>><?= h(strtoupper($lc)) ?></button>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 </nav>
@@ -216,17 +275,19 @@ $flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info
     <!-- Боковая панель -->
     <div class="p-3 bg-body-tertiary border-end" id="sidebar">
         <ul class="nav flex-column">
-            <li class="nav-item"><a class="nav-link text-reset" href="#" data-bs-toggle="modal" data-bs-target="#createModal">Добавить пользователя</a></li>
-            <li class="nav-item"><a class="nav-link text-reset" href="<?= h($base) ?>">Главная страница сайта</a></li>
-            <li class="nav-item"><a class="nav-link text-reset" href="<?= h($base) ?>?page=login.htm">Вход на сайт</a></li>
+            <li class="nav-item"><a class="nav-link text-reset" href="#" data-bs-toggle="modal" data-bs-target="#createModal"><?= e('Add user') ?></a></li>
+            <li class="nav-item"><a class="nav-link text-reset" href="<?= h($base) ?>"><?= e('Site home page') ?></a></li>
+            <?php if ($current && strtolower((string)$current['role']) === 'admin'): ?>
+            <li class="nav-item"><a class="nav-link text-reset" href="<?= h($base) ?>?page=index.htm&amp;isAdmin=true"><?= e('Administrator panel') ?></a></li>
+            <?php endif; ?>
         </ul>
         <hr>
         <div class="small text-body-secondary">
-            <div class="fw-semibold mb-1">Порядок действий</div>
+            <div class="fw-semibold mb-1"><?= e('Order of actions') ?></div>
             <ol class="ps-3 mb-0">
-                <li>Создайте администратора</li>
-                <li>Войдите на сайт</li>
-                <li>Удалите этот файл</li>
+                <li><?= e('Create an administrator') ?></li>
+                <li><?= e('Log in to the site') ?></li>
+                <li><?= e('Delete this file') ?></li>
             </ol>
         </div>
     </div>
@@ -234,43 +295,43 @@ $flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info
     <!-- Основной контент -->
     <div class="flex-grow-1">
         <div class="container-fluid p-4">
-            <h2 class="mb-1">Пользователи</h2>
-            <p class="text-body-secondary">Создание, изменение и удаление пользователей и администраторов без входа в систему.</p>
+            <h2 class="mb-1"><?= e('Users') ?></h2>
+            <p class="text-body-secondary"><?= e('Create, edit and delete users and administrators without logging in.') ?></p>
 
             <?php if ($flash): ?>
                 <div class="alert alert-<?= h($flashClass) ?> alert-dismissible fade show" role="alert">
                     <?= h($flash[1]) ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Закрыть"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="<?= e('Close') ?>"></button>
                 </div>
             <?php endif; ?>
 
             <?php if ($admins === 0): ?>
-                <div class="alert alert-warning"><strong>Администраторов пока нет.</strong> Создайте первого кнопкой «Добавить пользователя» и выберите роль «Администратор».</div>
+                <div class="alert alert-warning"><strong><?= e('No administrators yet.') ?></strong> <?= e('Create the first one with the “Add user” button and choose the “Administrator” role.') ?></div>
             <?php else: ?>
-                <div class="alert alert-info">Администратор создан. Войдите на сайт и <strong>удалите create-admin.php</strong> (кнопка в красном баннере вверху).</div>
+                <div class="alert alert-info"><?= t('Administrator created. Log in to the site and <strong>delete create-admin.php</strong> (the button in the red banner at the top).') ?></div>
             <?php endif; ?>
 
             <!-- Статистика -->
             <div class="row g-3 mb-3">
-                <div class="col-6 col-xl-3"><div class="card border-0 bg-primary-subtle h-100"><div class="card-body"><div class="stat-number"><?= count($users) ?></div><div class="text-body-secondary">Всего пользователей</div></div></div></div>
-                <div class="col-6 col-xl-3"><div class="card border-0 bg-danger-subtle h-100"><div class="card-body"><div class="stat-number"><?= $admins ?></div><div class="text-body-secondary">Администраторов</div></div></div></div>
-                <div class="col-6 col-xl-3"><div class="card border-0 bg-success-subtle h-100"><div class="card-body"><div class="stat-number"><?= count($users) - $admins ?></div><div class="text-body-secondary">Обычных пользователей</div></div></div></div>
-                <div class="col-6 col-xl-3"><div class="card border-0 bg-secondary-subtle h-100"><div class="card-body"><div class="stat-number text-uppercase"><?= h($cmsConfig['storage']) ?></div><div class="text-body-secondary">Хранилище данных</div></div></div></div>
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-primary-subtle h-100"><div class="card-body"><div class="stat-number"><?= count($users) ?></div><div class="text-body-secondary"><?= e('Total users') ?></div></div></div></div>
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-danger-subtle h-100"><div class="card-body"><div class="stat-number"><?= $admins ?></div><div class="text-body-secondary"><?= e('Administrators') ?></div></div></div></div>
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-success-subtle h-100"><div class="card-body"><div class="stat-number"><?= count($users) - $admins ?></div><div class="text-body-secondary"><?= e('Regular users') ?></div></div></div></div>
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-secondary-subtle h-100"><div class="card-body"><div class="stat-number text-uppercase"><?= h($cmsConfig['storage']) ?></div><div class="text-body-secondary"><?= e('Data storage') ?></div></div></div></div>
             </div>
 
             <!-- Список -->
             <div class="card rounded shadow-none" id="users">
                 <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
-                    <span class="fw-semibold">Все пользователи (<?= count($users) ?>)</span>
+                    <span class="fw-semibold"><?= e('All users') ?> (<?= count($users) ?>)</span>
                     <div class="d-flex gap-2">
-                        <input type="search" id="userSearch" class="form-control form-control-sm" placeholder="Поиск по email или имени" style="min-width:220px">
-                        <button type="button" class="btn btn-success btn-sm text-nowrap" data-bs-toggle="modal" data-bs-target="#createModal">+ Добавить пользователя</button>
+                        <input type="search" id="userSearch" class="form-control form-control-sm" placeholder="<?= e('Search by email or name') ?>" style="min-width:220px">
+                        <button type="button" class="btn btn-success btn-sm text-nowrap" data-bs-toggle="modal" data-bs-target="#createModal">+ <?= e('Add user') ?></button>
                     </div>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle mb-0">
                         <thead>
-                            <tr><th class="ps-3">Пользователь</th><th>Роль</th><th>Права доступа</th><th>Пароль</th><th class="text-end pe-3">Действия</th></tr>
+                            <tr><th class="ps-3"><?= e('Account') ?></th><th><?= e('Role') ?></th><th><?= e('Access rights') ?></th><th><?= e('Password') ?></th><th class="text-end pe-3"><?= e('Actions') ?></th></tr>
                         </thead>
                         <tbody id="usersBody">
                         <?php foreach ($users as $u):
@@ -281,26 +342,32 @@ $flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info
                                     <div class="d-flex align-items-center gap-2">
                                         <span class="avatar <?= $isAdm ? 'bg-danger-subtle text-danger-emphasis' : 'bg-primary-subtle text-primary-emphasis' ?>"><?= h(initial($u['name'] ?? '')) ?></span>
                                         <div>
-                                            <div class="fw-semibold"><?= h($u['name'] ?? '') ?><?= $isMe ? ' <span class="badge text-bg-light border">вы</span>' : '' ?></div>
+                                            <div class="fw-semibold"><?= h($u['name'] ?? '') ?><?= $isMe ? ' <span class="badge text-bg-light border">' . e('You') . '</span>' : '' ?></div>
                                             <div class="small text-body-secondary"><?= h($u['email'] ?? '') ?></div>
                                         </div>
                                     </div>
                                 </td>
                                 <td><span class="badge <?= $isAdm ? 'text-bg-danger' : 'text-bg-primary' ?>"><?= h($roleLabel($u['role'] ?? '')) ?></span></td>
                                 <td>
-                                    <?php foreach (($isAdm ? ['Админ-панель', 'Пользователи', 'Настройки', 'Журнал', 'Переводы'] : ['Сайт', 'Профиль']) as $perm): ?>
+                                    <?php foreach (($isAdm ? [t('Admin panel'), t('Users'), t('Settings'), t('Log'), t('Translations')] : [t('Site'), t('Profile')]) as $perm): ?>
                                         <span class="badge chip bg-body-secondary text-body border"><?= h($perm) ?></span>
                                     <?php endforeach; ?>
                                 </td>
-                                <td><span class="small text-body-secondary"><?= strpos((string)($u['password'] ?? ''), '$2y$') === 0 ? 'bcrypt, хеш скрыт' : 'нестандартный хеш' ?></span></td>
+                                <td><span class="small text-body-secondary"><?= strpos((string)($u['password'] ?? ''), '$2y$') === 0 ? e('bcrypt, hash hidden') : e('non-standard hash') ?></span></td>
                                 <td class="text-end pe-3 text-nowrap">
+                                    <form method="post" class="d-inline">
+                                        <input type="hidden" name="_token" value="<?= h($token) ?>">
+                                        <input type="hidden" name="action" value="impersonate">
+                                        <input type="hidden" name="email" value="<?= h($u['email'] ?? '') ?>">
+                                        <button type="submit" class="btn btn-outline-primary btn-sm"<?= $isMe ? ' disabled' : '' ?>><?= e('Become this user') ?></button>
+                                    </form>
                                     <button type="button" class="btn btn-outline-secondary btn-sm js-edit"
-                                            data-email="<?= h($u['email'] ?? '') ?>" data-name="<?= h($u['name'] ?? '') ?>" data-role="<?= h(strtolower((string)($u['role'] ?? 'user'))) ?>">Изменить</button>
-                                    <form method="post" class="d-inline" data-confirm="Удалить пользователя «<?= h($u['email'] ?? '') ?>»? Это действие необратимо." data-confirm-title="Удаление пользователя" data-confirm-btn="Удалить">
+                                            data-email="<?= h($u['email'] ?? '') ?>" data-name="<?= h($u['name'] ?? '') ?>" data-role="<?= h(strtolower((string)($u['role'] ?? 'user'))) ?>"><?= e('Edit') ?></button>
+                                    <form method="post" class="d-inline" data-confirm="<?= h(sprintf(t('Delete user “%s”? This action cannot be undone.'), $u['email'] ?? '')) ?>" data-confirm-title="<?= e('Deleting user') ?>" data-confirm-btn="<?= e('Delete') ?>">
                                         <input type="hidden" name="_token" value="<?= h($token) ?>">
                                         <input type="hidden" name="action" value="delete">
                                         <input type="hidden" name="email" value="<?= h($u['email'] ?? '') ?>">
-                                        <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
+                                        <button type="submit" class="btn btn-outline-danger btn-sm"><?= e('Delete') ?></button>
                                     </form>
                                 </td>
                             </tr>
@@ -308,7 +375,7 @@ $flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info
                         </tbody>
                     </table>
                 </div>
-                <div id="noUsers" class="text-center text-body-secondary py-4 <?= $users ? 'd-none' : '' ?>"><?= $users ? 'Ничего не найдено.' : 'Пользователей пока нет.' ?></div>
+                <div id="noUsers" class="text-center text-body-secondary py-4 <?= $users ? 'd-none' : '' ?>"><?= $users ? e('Nothing found.') : e('No users yet.') ?></div>
             </div>
         </div>
     </div>
@@ -321,7 +388,7 @@ $flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info
             <p class="mb-0">&copy; Flit CMS</p>
             <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="themeSwitch">
-                <label class="form-check-label" id="themeLabel" for="themeSwitch">Светлая тема</label>
+                <label class="form-check-label" id="themeLabel" for="themeSwitch"><?= e('Light theme') ?></label>
             </div>
         </div>
     </div>
@@ -333,29 +400,29 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
     <div class="mb-3">
         <label for="<?= $prefix ?>Email" class="form-label">Email</label>
         <input type="email" class="form-control" id="<?= $prefix ?>Email" name="email" required maxlength="255" autocomplete="off">
-        <div class="invalid-feedback">Введите корректный email.</div>
+        <div class="invalid-feedback"><?= e('Enter a valid email.') ?></div>
     </div>
     <div class="mb-3">
-        <label for="<?= $prefix ?>Name" class="form-label">Имя</label>
+        <label for="<?= $prefix ?>Name" class="form-label"><?= e('Name') ?></label>
         <input type="text" class="form-control" id="<?= $prefix ?>Name" name="name" required maxlength="100" autocomplete="off">
-        <div class="invalid-feedback">Укажите имя (до 100 символов).</div>
+        <div class="invalid-feedback"><?= e('Enter a name (up to 100 characters).') ?></div>
     </div>
     <div class="mb-3">
-        <label for="<?= $prefix ?>Password" class="form-label"><?= $passwordRequired ? 'Пароль' : 'Новый пароль' ?> <span class="text-body-secondary small"><?= $passwordRequired ? '(8-72 символа)' : '(оставьте пустым, чтобы не менять)' ?></span></label>
+        <label for="<?= $prefix ?>Password" class="form-label"><?= $passwordRequired ? e('Password') : e('New password') ?> <span class="text-body-secondary small"><?= $passwordRequired ? e('(8-72 characters)') : e('(leave empty to keep unchanged)') ?></span></label>
         <div class="input-group has-validation">
             <input type="password" class="form-control" id="<?= $prefix ?>Password" name="password" minlength="8" maxlength="72" autocomplete="new-password" <?= $passwordRequired ? 'required' : '' ?>>
-            <button class="btn btn-outline-secondary js-toggle-pass" type="button" data-target="<?= $prefix ?>Password" title="Показать / скрыть">Показать</button>
-            <button class="btn btn-outline-secondary js-gen-pass" type="button" data-target="<?= $prefix ?>Password" title="Сгенерировать надёжный пароль">Сгенерировать</button>
-            <div class="invalid-feedback">Пароль должен содержать от 8 до 72 символов.</div>
+            <button class="btn btn-outline-secondary js-toggle-pass" type="button" data-target="<?= $prefix ?>Password" title="<?= e('Show / hide') ?>"><?= e('Show') ?></button>
+            <button class="btn btn-outline-secondary js-gen-pass" type="button" data-target="<?= $prefix ?>Password" title="<?= e('Generate a strong password') ?>"><?= e('Generate') ?></button>
+            <div class="invalid-feedback"><?= e('Password must be between 8 and 72 characters') ?></div>
         </div>
     </div>
     <div class="mb-1">
-        <label for="<?= $prefix ?>Role" class="form-label">Права доступа</label>
+        <label for="<?= $prefix ?>Role" class="form-label"><?= e('Access rights') ?></label>
         <select class="form-select js-role" id="<?= $prefix ?>Role" name="role">
-            <option value="user">Пользователь</option>
-            <option value="admin">Администратор</option>
+            <option value="user"><?= e('Regular user') ?></option>
+            <option value="admin"><?= e('Administrator') ?></option>
         </select>
-        <div class="form-text js-role-help">Обычный доступ: сайт и личный профиль.</div>
+        <div class="form-text js-role-help"><?= e('Regular access: the site and personal profile.') ?></div>
     </div>
 <?php } ?>
 
@@ -366,13 +433,13 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
             <input type="hidden" name="_token" value="<?= h($token) ?>">
             <input type="hidden" name="action" value="create">
             <div class="modal-header">
-                <h5 class="modal-title" id="createModalLabel">Добавить пользователя</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                <h5 class="modal-title" id="createModalLabel"><?= e('Add user') ?></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="<?= e('Close') ?>"></button>
             </div>
             <div class="modal-body"><?php userFields('create', true); ?></div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                <button type="submit" class="btn btn-success">Создать</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><?= e('Cancel') ?></button>
+                <button type="submit" class="btn btn-success"><?= e('Create') ?></button>
             </div>
         </form>
     </div>
@@ -386,13 +453,13 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
             <input type="hidden" name="action" value="update">
             <input type="hidden" name="orig_email" id="editOrig" value="<?= h($editing['email'] ?? '') ?>">
             <div class="modal-header">
-                <h5 class="modal-title" id="editModalLabel">Изменить пользователя</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                <h5 class="modal-title" id="editModalLabel"><?= e('Edit user') ?></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="<?= e('Close') ?>"></button>
             </div>
             <div class="modal-body"><?php userFields('edit', false); ?></div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                <button type="submit" class="btn btn-primary">Сохранить</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><?= e('Cancel') ?></button>
+                <button type="submit" class="btn btn-primary"><?= e('Save') ?></button>
             </div>
         </form>
     </div>
@@ -402,11 +469,11 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title" id="confirmTitle">Подтверждение</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button></div>
+            <div class="modal-header"><h5 class="modal-title" id="confirmTitle"><?= e('Confirmation') ?></h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="<?= e('Close') ?>"></button></div>
             <div class="modal-body" id="confirmText"></div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                <button type="button" class="btn btn-danger" id="confirmOk">Удалить</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><?= e('Cancel') ?></button>
+                <button type="button" class="btn btn-danger" id="confirmOk"><?= e('Delete') ?></button>
             </div>
         </div>
     </div>
@@ -418,12 +485,28 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
     var $ = function (s, r) { return (r || document).querySelector(s); };
     var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
     var hasBs = !!window.bootstrap;
+    var T = <?= json_encode([
+        'dark' => t('Dark theme'), 'light' => t('Light theme'), 'none' => t('Nothing found.'),
+        'show' => t('Show'), 'hide' => t('Hide'),
+        'helpUser' => t('Regular access: the site and personal profile.'),
+        'helpAdmin' => t('Full access: admin panel, users, settings, log, translations.'),
+        'edit' => t('Edit: %s'), 'confirmTitle' => t('Confirmation'), 'confirmBtn' => t('Confirm'),
+    ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    var LANG_COOKIE = <?= json_encode($cmsConfig['langCookieName']) ?>;
+
+    // --- Язык (как на сайте: кука + перезагрузка) ---
+    $$('.js-lang').forEach(function (b) {
+        b.addEventListener('click', function () {
+            document.cookie = LANG_COOKIE + '=' + encodeURIComponent(b.dataset.lang) + ';path=/';
+            window.location.reload();
+        });
+    });
 
     // --- Тема (как в админке) ---
     var sw = $('#themeSwitch'), label = $('#themeLabel');
     function applyTheme(t) {
         document.documentElement.setAttribute('data-bs-theme', t);
-        label.textContent = t === 'dark' ? 'Тёмная тема' : 'Светлая тема';
+        label.textContent = t === 'dark' ? T.dark : T.light;
     }
     var saved = 'light'; try { saved = localStorage.getItem('theme') || 'light'; } catch (e) {}
     sw.checked = saved === 'dark'; applyTheme(saved);
@@ -437,14 +520,14 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
     search.addEventListener('input', function () {
         var q = search.value.trim().toLowerCase(), shown = 0;
         rows.forEach(function (r) { var ok = r.getAttribute('data-search').indexOf(q) !== -1; r.classList.toggle('d-none', !ok); if (ok) shown++; });
-        if (rows.length) { none.textContent = 'Ничего не найдено.'; none.classList.toggle('d-none', shown > 0); }
+        if (rows.length) { none.textContent = T.none; none.classList.toggle('d-none', shown > 0); }
     });
 
     // --- Пароль: показать / сгенерировать ---
     $$('.js-toggle-pass').forEach(function (b) {
         b.addEventListener('click', function () {
             var i = document.getElementById(b.dataset.target);
-            var show = i.type === 'password'; i.type = show ? 'text' : 'password'; b.textContent = show ? 'Скрыть' : 'Показать';
+            var show = i.type === 'password'; i.type = show ? 'text' : 'password'; b.textContent = show ? T.hide : T.show;
         });
     });
     $$('.js-gen-pass').forEach(function (b) {
@@ -453,12 +536,12 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
             crypto.getRandomValues(buf);
             buf.forEach(function (n) { out += chars[n % chars.length]; });
             var i = document.getElementById(b.dataset.target); i.value = out; i.type = 'text';
-            var t = $('.js-toggle-pass[data-target="' + b.dataset.target + '"]'); if (t) t.textContent = 'Скрыть';
+            var t = $('.js-toggle-pass[data-target="' + b.dataset.target + '"]'); if (t) t.textContent = T.hide;
         });
     });
 
     // --- Подсказка по роли ---
-    var help = { user: 'Обычный доступ: сайт и личный профиль.', admin: 'Полный доступ: админ-панель, пользователи, настройки, журнал, переводы.' };
+    var help = { user: T.helpUser, admin: T.helpAdmin };
     $$('.js-role').forEach(function (sel) {
         var upd = function () { sel.parentNode.querySelector('.js-role-help').textContent = help[sel.value] || ''; };
         sel.addEventListener('change', upd); upd();
@@ -470,7 +553,7 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
         $('#editPassword').value = ''; $('#editPassword').type = 'password';
         $('#editRole').value = role === 'admin' ? 'admin' : 'user';
         $('#editRole').dispatchEvent(new Event('change'));
-        $('#editModalLabel').textContent = 'Изменить: ' + email;
+        $('#editModalLabel').textContent = T.edit.replace('%s', email);
     }
     $$('.js-edit').forEach(function (b) {
         b.addEventListener('click', function () {
@@ -499,9 +582,9 @@ function userFields(string $prefix, bool $passwordRequired): void { ?>
             e.preventDefault();
             if (!hasBs) { if (confirm(f.dataset.confirm)) f.submit(); return; }
             pending = f;
-            $('#confirmTitle').textContent = f.dataset.confirmTitle || 'Подтверждение';
+            $('#confirmTitle').textContent = f.dataset.confirmTitle || T.confirmTitle;
             $('#confirmText').textContent = f.dataset.confirm;
-            $('#confirmOk').textContent = f.dataset.confirmBtn || 'Подтвердить';
+            $('#confirmOk').textContent = f.dataset.confirmBtn || T.confirmBtn;
             bootstrap.Modal.getOrCreateInstance($('#confirmModal')).show();
         });
     });

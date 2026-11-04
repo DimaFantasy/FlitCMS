@@ -181,6 +181,11 @@ function handleAction($action, $user, $storage)
                 $response = saveTranslation();
                 break;
 
+            // Удаление перевода ключа для одного языка
+            case 'delete_translation':
+                $response = deleteTranslation();
+                break;
+
             // Поиск оригинального ключа по переводу
             case 'find_original_key':
                 $response = findOriginalKey();
@@ -760,6 +765,39 @@ function saveTranslation()
             'success' => false,
             'message' => t('Failed to save translation')
         ];
+    }
+}
+
+// Удаляет перевод ключа для языка и возвращает ключ в список отсутствующих переводов
+function deleteTranslation()
+{
+    $key  = $_POST['key'] ?? '';
+    $lang = $_POST['lang'] ?? '';
+
+    if ($key === '' || $lang === '') {
+        return ['success' => false, 'message' => t('Missing required parameters')];
+    }
+
+    try {
+        $translator   = Translator::getInstance();
+        $translations = $translator->manageTranslations('get', $lang);
+
+        if (!is_array($translations) || !array_key_exists($key, $translations)) {
+            return ['success' => false, 'message' => t('Failed to delete translation')];
+        }
+
+        if (!$translator->manageTranslations('delete', $lang, $key)) {
+            logMessage("Не удалось удалить перевод для ключа: $key, язык: $lang", 'ERROR');
+            return ['success' => false, 'message' => t('Failed to delete translation')];
+        }
+
+        // Перевода больше нет хотя бы на одном языке, значит ключ снова нужно перевести
+        $translator->manageMissing('add', $key);
+
+        return ['success' => true];
+    } catch (Exception $e) {
+        logMessage('Ошибка удаления перевода: ' . $e->getMessage(), 'ERROR');
+        return ['success' => false, 'message' => t('Failed to delete translation')];
     }
 }
 

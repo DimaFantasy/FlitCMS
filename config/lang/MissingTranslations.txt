@@ -1,1 +1,5 @@
-Message
+Saved: %s.
+No administrators yet.
+Create the first one with the “Add user” button and choose the “Administrator” role.
+Deleted: %s.
+No users yet.

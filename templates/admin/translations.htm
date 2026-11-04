@@ -8,7 +8,7 @@
             
             <div class="card border mb-4">
                 <div class="card-body p-0">
-                    <table class="table table-hover mb-0" id="missingTranslationsTable">
+                    <table class="table table-hover align-middle mb-0" id="missingTranslationsTable">
                         <thead>
                             <tr>
                                 <th>{{t('Missing Translation')}}</th>
@@ -22,6 +22,24 @@
                 </div>
             </div>
             
+            <!-- Массовый перевод: результаты показываются в таблице выше -->
+            <div class="card shadow-sm border mb-4" id="massCard">
+                <div class="card-body">
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                        <button type="button" class="btn btn-success" id="massTranslateBtn">{{t('Translate all')}}</button>
+                        <button type="button" class="btn btn-outline-secondary" id="massStopBtn" disabled>{{t('Stop')}}</button>
+                        <span class="d-none d-inline-flex align-items-center gap-2 ms-2" id="massSaveArea">
+                            <input type="checkbox" class="form-check-input m-0" id="massCheckAll">
+                            <label for="massCheckAll" class="form-check-label user-select-none">{{t('Select all')}}</label>
+                            <button type="button" class="btn btn-success" id="massSaveBtn">{{t('Save checked')}}</button>
+                        </span>
+                        <span class="text-muted ms-2" id="massProgress" role="status"></span>
+                        <span class="text-muted" id="massReport" role="status"></span>
+                    </div>
+                    <div class="small text-muted mt-2">{{t('Existing translations are not overwritten. Review the result, edit if needed, then save.')}} {{t('Click a key to open it in the form below.')}}</div>
+                </div>
+            </div>
+
             <div class="card shadow-sm border mb-4">
                 <div class="card-body">
                     <label for="selectedTranslation" class="form-label">{{t('Selected Translation')}}</label>
@@ -44,8 +62,8 @@
 <template id="missing-translation-row-template">
     <tr>
         <td></td>
-        <td class="text-end">
-            <button type="button" class="btn btn-sm btn-outline-danger delete-missing">
+        <td class="text-end text-nowrap">
+            <button type="button" class="btn btn-sm btn-outline-danger delete-missing align-middle">
                 {{t('Delete')}}
             </button>
         </td>
@@ -68,6 +86,7 @@
                        autocomplete="off">
                 <button class="btn btn-outline-success translate-btn" type="button">{{t('Translate')}}</button>   
                 <button class="btn btn-outline-success save-translation" type="button">{{t('Save')}}</button>
+                <button class="btn btn-outline-danger delete-translation" type="button">{{t('Delete')}}</button>
                 <!-- Заменяем пользовательский стиль на классы Bootstrap -->
                 <span class="input-group-text d-none text-success" role="status">
                     <!-- Используем символ галочки из Bootstrap -->
@@ -88,6 +107,34 @@ document.addEventListener('DOMContentLoaded', function() {
     var validLanguages = [];
     var debounceTimer;
     var checkOriginalKeyTimeout;
+    var missingKeys = [];
+    var massRunning = false;
+    var massStop = false;
+    var massSaving = false;
+
+    // Тексты интерфейса для массового перевода
+    var I18N = {
+        translateAll: '{{t("Translate all")}}',
+        confirmTitle: '{{t("Translate all missing translations?")}}',
+        keys: '{{t("Keys")}}',
+        languages: '{{t("Languages")}}',
+        noKeys: '{{t("No missing translations")}}',
+        translating: '{{t("Translating")}}',
+        done: '{{t("Done")}}',
+        stopped: '{{t("Stopped")}}',
+        tooManyErrors: '{{t("Too many consecutive errors, translation stopped")}}',
+        key: '{{t("Key")}}',
+        needsReview: '{{t("Needs review")}}',
+        error: '{{t("Error")}}',
+        alreadyExists: '{{t("Already exists")}}',
+        saved: '{{t("Saved")}}',
+        partial: '{{t("Partially saved")}}',
+        save: '{{t("Save")}}',
+        nothingToSave: '{{t("Nothing to save")}}',
+        reportSaved: '{{t("Saved:")}}',
+        reportErrors: '{{t("Errors:")}}',
+        reportSkipped: '{{t("Not checked:")}}'
+    };
 
     /**
      * Загружает список доступных языков с сервера
@@ -159,6 +206,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     var tbody = document.querySelector('#missingTranslationsTable tbody');
                     var template = document.getElementById('missing-translation-row-template');
                     tbody.innerHTML = '';
+                    missingKeys = Array.isArray(data.translations) ? data.translations.map(function(k) { return String(k).trim(); }).filter(Boolean) : [];
                     
                     if (Array.isArray(data.translations)) {
                         for (var i = 0; i < data.translations.length; i++) {
@@ -178,6 +226,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             tbody.appendChild(row);
                         }
                     }
+                    decorateAllRows();
                 }
             }
         };
@@ -224,17 +273,27 @@ document.addEventListener('DOMContentLoaded', function() {
      * @param {string} targetLang - Целевой язык перевода
      * @returns {Promise<string>} Переведенный текст
      */
-    function translateText(text, targetLang) {
-        var sourceLang = 'auto';
-        var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + sourceLang + '&tl=' + targetLang + '&dt=t&q=' + encodeURIComponent(text);
+    function translateText(text, targetLang, sourceLang) {
+        var sl = sourceLang || 'auto';
+        var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + sl + '&tl=' + targetLang + '&dt=t&q=' + encodeURIComponent(text);
         
         return fetch(url)
             .then(function(response) {
+                if (!response.ok) {
+                    var err = new Error('HTTP ' + response.status);
+                    err.status = response.status;
+                    throw err;
+                }
                 return response.json();
             })
             .then(function(data) {
-                if (data && data[0] && data[0][0] && data[0][0][0]) {
-                    return data[0][0][0];
+                // Ответ разбит на фрагменты по предложениям, собираем все
+                if (data && Array.isArray(data[0])) {
+                    var out = '';
+                    data[0].forEach(function(segment) {
+                        if (segment && segment[0]) out += segment[0];
+                    });
+                    if (out) return out;
                 }
                 throw new Error('Invalid translation response');
             });
@@ -337,7 +396,10 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Получаем оригинальный ключ, если есть
         const originalKey = document.getElementById('originalKey').value;
-        const textToUse = sourceText;
+        // Если введен перевод, а не ключ, правим и сохраняем под оригинальным ключом.
+        // Ключи из списка отсутствующих остаются как есть.
+        const isMissingKey = missingKeys.indexOf(sourceText.trim()) !== -1;
+        const textToUse = (lookupKey && !isMissingKey) ? lookupKey : sourceText;
         
         validLanguages.forEach(lang => {
             const translation = translationTemplate.content.cloneNode(true);
@@ -397,6 +459,28 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
             };
 
+            // Удаление перевода на этом языке: ключ снова попадет в список отсутствующих
+            const deleteBtn = translation.querySelector('.delete-translation');
+            deleteBtn.addEventListener('click', function() {
+                if (!confirm('{{t("Delete")}}: ' + lang.toUpperCase() + ' - ' + textToUse + ' ?')) return;
+                deleteBtn.disabled = true;
+                postAjax('action=delete_translation&key=' + encodeURIComponent(textToUse) + '&lang=' + encodeURIComponent(lang))
+                    .then(function(data) {
+                        if (data && data.success) {
+                            input.value = '';
+                            delete massData[textToUse.trim()];
+                            loadMissingTranslations();
+                        } else {
+                            alert((data && data.message) || '{{t("Failed to delete translation")}}');
+                        }
+                    })
+                    .catch(function(error) {
+                        console.error('Delete translation error:', error);
+                        alert('{{t("Failed to delete translation")}}');
+                    })
+                    .finally(function() { deleteBtn.disabled = false; });
+            });
+
             // Загрузка существующего перевода
             fetch('ajax.php', {
                 method: 'POST',
@@ -426,6 +510,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 .closest('.card')
                 .after(container);
         }
+
+        applyPreviewToForm(sourceText);
     }
 
     /**
@@ -524,12 +610,447 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 300)); // Задержка в 300 миллисекунд
 
     document.getElementById('missingTranslationsTable').addEventListener('click', function(e) {
+        if (e.target.closest('button, input, label')) return;
         const targetRow = e.target.closest('tr');
         if (targetRow && !targetRow.closest('thead') && targetRow.cells) {
             const selectedText = targetRow.cells[0].textContent;
             selectedTranslationInput.value = selectedText;
             handleTextChange(selectedText);
+            if (massData[selectedText.trim()]) {
+                selectedTranslationInput.closest('.card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
         }
+    });
+
+    // ===== Массовый перевод: результаты показываются прямо в таблице отсутствующих переводов =====
+
+    var massData = {}; // ключ -> { values: {lang: {value, state}}, review, error, checked, done, partial, pending, ready, allExisting }
+
+    function sleep(ms) {
+        return new Promise(function(resolve) { setTimeout(resolve, ms); });
+    }
+
+    /**
+     * POST-запрос к ajax.php, возвращает разобранный JSON
+     * @param {string} body - Тело запроса (urlencoded)
+     * @returns {Promise<Object>}
+     */
+    function postAjax(body) {
+        return fetch('ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-Token': window.csrfToken
+            },
+            body: body
+        }).then(function(response) {
+            return response.json();
+        });
+    }
+
+    /**
+     * Ключ написан латиницей (без кириллицы и грузинского)
+     */
+    function isLatinKey(text) {
+        return /[A-Za-z]/.test(text) && !/[Ѐ-ӿႠ-ჿ]/.test(text);
+    }
+
+    /**
+     * Заменяет %s, %1$s, {name}, HTML-теги и сущности токенами, чтобы переводчик их не испортил
+     */
+    function protectText(text) {
+        var tokens = [];
+        var re = new RegExp('(%(?:\\d+\\$)?[sdfuxX]|<[^>]+>|\\{\\w+\\}|&#?\\w+;)', 'g');
+        var out = text.replace(re, function(match) {
+            tokens.push(match);
+            return 'XPH' + (tokens.length - 1) + 'X';
+        });
+        return { text: out, tokens: tokens };
+    }
+
+    /**
+     * Возвращает токены на место. ok = false, если какой-то токен потерян
+     */
+    function restoreText(text, tokens) {
+        var ok = true;
+        tokens.forEach(function(token, i) {
+            var re = new RegExp('X\\s*PH\\s*' + i + '\\s*X', 'i');
+            if (re.test(text)) {
+                text = text.replace(re, function() { return token; });
+            } else {
+                ok = false;
+            }
+        });
+        return { text: text, ok: ok };
+    }
+
+    /**
+     * Перевод с повторными попытками (при 429 и сетевых сбоях)
+     */
+    function translateWithRetry(text, lang, sourceLang, attempt) {
+        attempt = attempt || 0;
+        return translateText(text, lang, sourceLang).catch(function(err) {
+            if (attempt >= 3 || massStop) throw err;
+            return sleep(1500 * Math.pow(2, attempt)).then(function() {
+                return translateWithRetry(text, lang, sourceLang, attempt + 1);
+            });
+        });
+    }
+
+    function massEl(id) {
+        return document.getElementById(id);
+    }
+
+    function findMissingRow(key) {
+        var rows = document.querySelectorAll('#missingTranslationsTable tbody tr');
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].cells[0].textContent.trim() === key) return rows[i];
+        }
+        return null;
+    }
+
+    function setMassButtons() {
+        var busy = massRunning || massSaving;
+        massEl('massTranslateBtn').disabled = busy;
+        massEl('massStopBtn').disabled = !massRunning;
+        massEl('massSaveBtn').disabled = busy;
+        massEl('massCheckAll').disabled = busy;
+        document.querySelectorAll('#missingTranslationsTable .mass-row-save').forEach(function(btn) {
+            btn.disabled = busy;
+        });
+    }
+
+    function readyKeys() {
+        return Object.keys(massData).filter(function(k) {
+            var d = massData[k];
+            return d.ready && !d.allExisting && !d.done;
+        });
+    }
+
+    function updateSaveArea() {
+        massEl('massSaveArea').classList.toggle('d-none', Object.keys(massData).length === 0);
+    }
+
+    /**
+     * Рисует в строке таблицы чекбокс, статус и кнопку «Сохранить» для готового перевода
+     */
+    function decorateRow(tr) {
+        var key = tr.cells[0].textContent.trim();
+        var d = massData[key];
+        var actions = tr.cells[1];
+        var old = actions.querySelector('.mass-controls');
+        if (old) old.remove();
+        tr.classList.remove('table-warning', 'table-success');
+        if (!d) return;
+
+        var box = document.createElement('span');
+        box.className = 'mass-controls d-inline-flex align-items-center align-middle gap-2 me-2';
+
+        function badge(cls, text) {
+            var b = document.createElement('span');
+            b.className = 'badge ' + cls;
+            b.textContent = text;
+            box.appendChild(b);
+        }
+
+        if (d.pending) {
+            var spin = document.createElement('span');
+            spin.className = 'spinner-border spinner-border-sm text-secondary';
+            spin.setAttribute('role', 'status');
+            box.appendChild(spin);
+        } else if (d.allExisting) {
+            badge('bg-secondary', I18N.alreadyExists);
+        } else if (d.done) {
+            tr.classList.add('table-success');
+            badge('bg-success', I18N.saved);
+        } else if (d.ready) {
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'form-check-input mass-check m-0';
+            cb.checked = !!d.checked;
+            cb.addEventListener('change', function() { d.checked = cb.checked; });
+            box.appendChild(cb);
+
+            if (d.error) {
+                badge('bg-danger', I18N.error);
+            } else if (d.review) {
+                tr.classList.add('table-warning');
+                badge('bg-warning text-dark', I18N.needsReview);
+            }
+            if (d.partial) badge('bg-info text-dark', I18N.partial);
+
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-outline-success mass-row-save';
+            btn.textContent = I18N.save;
+            btn.disabled = massRunning || massSaving;
+            btn.addEventListener('click', function() {
+                if (massRunning || massSaving) return;
+                massSaving = true;
+                setMassButtons();
+                saveKey(key).then(function(res) {
+                    showReport(res.saved, res.failed, 0);
+                }).then(finishSaving);
+            });
+            box.appendChild(btn);
+        }
+
+        actions.insertBefore(box, actions.firstChild);
+    }
+
+    function decorateAllRows() {
+        document.querySelectorAll('#missingTranslationsTable tbody tr').forEach(decorateRow);
+    }
+
+    function decorateKey(key) {
+        var tr = findMissingRow(key);
+        if (tr) decorateRow(tr);
+    }
+
+    /**
+     * Подставляет переводы в форму «Выбранный перевод» и передает правки обратно
+     */
+    function applyPreviewToForm(key) {
+        var d = massData[key];
+        if (!d || !d.ready) return;
+        document.querySelectorAll('#translations-container .translation-input').forEach(function(input) {
+            var v = d.values[input.dataset.lang];
+            if (!v) return;
+            if (v.state === 'new' && v.value) {
+                input.value = v.value;
+            }
+            input.addEventListener('input', function() {
+                if (v.state === 'new') v.value = input.value;
+            });
+        });
+    }
+
+    /**
+     * Обрабатывает один ключ: проверяет, где перевод уже есть, и переводит остальные языки
+     */
+    function processKey(key, ctx) {
+        var d = { pending: true, ready: false, values: {}, review: false, error: false, checked: false, done: false, partial: false, allExisting: false };
+        massData[key] = d;
+        validLanguages.forEach(function(lang) {
+            d.values[lang] = { value: '', state: 'new' };
+        });
+        decorateKey(key);
+
+        var prot = protectText(key);
+        var latin = isLatinKey(key);
+        d.review = prot.tokens.length > 0;
+
+        return Promise.all(validLanguages.map(function(lang) {
+            return postAjax('action=get_translation&key=' + encodeURIComponent(key) + '&lang=' + encodeURIComponent(lang))
+                .then(function(data) {
+                    if (data && data.success && data.translation && data.translation !== '[' + key + ']') {
+                        return data.translation;
+                    }
+                    return null;
+                })
+                .catch(function() { return null; });
+        })).then(function(existing) {
+            var todo = [];
+            validLanguages.forEach(function(lang, i) {
+                if (existing[i] !== null) {
+                    // Готовый перевод не трогаем
+                    d.values[lang] = { value: existing[i], state: 'existing' };
+                } else {
+                    todo.push(lang);
+                }
+            });
+
+            if (!todo.length) {
+                d.allExisting = true;
+                return;
+            }
+
+            var seq = Promise.resolve();
+            todo.forEach(function(lang) {
+                seq = seq.then(function() {
+                    if (massStop) return;
+                    if (lang === 'en' && latin) {
+                        d.values[lang].value = key;
+                        return;
+                    }
+                    return translateWithRetry(prot.text, lang, latin ? 'en' : 'auto')
+                        .then(function(result) {
+                            ctx.errStreak = 0;
+                            var restored = restoreText(result, prot.tokens);
+                            if (!restored.ok) d.review = true;
+                            d.values[lang].value = restored.text;
+                        })
+                        .catch(function(err) {
+                            console.error('Translation error:', key, lang, err);
+                            d.error = true;
+                            ctx.errStreak++;
+                            if (ctx.errStreak >= 3) {
+                                massStop = true;
+                                ctx.aborted = true;
+                            }
+                        })
+                        .then(function() { return sleep(250); });
+                });
+            });
+            return seq.then(function() {
+                var allFilled = todo.every(function(lang) {
+                    return d.values[lang].value.trim() !== '';
+                });
+                d.checked = allFilled && !d.review && !d.error;
+            });
+        }).then(function() {
+            d.pending = false;
+            d.ready = true;
+            decorateKey(key);
+            updateSaveArea();
+        });
+    }
+
+    /**
+     * Запускает массовый перевод всех ключей из списка (последовательно)
+     */
+    function runMassTranslate() {
+        if (massRunning || massSaving) return;
+        if (!validLanguages.length || !missingKeys.length) {
+            alert(I18N.noKeys);
+            return;
+        }
+        var keys = missingKeys.slice();
+        var msg = I18N.confirmTitle + '\n\n' + I18N.keys + ': ' + keys.length + '\n' + I18N.languages + ': ' + validLanguages.join(', ');
+        if (!confirm(msg)) return;
+
+        massData = {};
+        decorateAllRows();
+        massEl('massReport').textContent = '';
+        massEl('massCheckAll').checked = false;
+        updateSaveArea();
+
+        massRunning = true;
+        massStop = false;
+        setMassButtons();
+
+        var ctx = { errStreak: 0, aborted: false };
+        var progress = massEl('massProgress');
+        var processed = 0;
+
+        function step(i) {
+            if (i >= keys.length || massStop) return Promise.resolve();
+            progress.textContent = I18N.translating + ': ' + i + ' / ' + keys.length;
+            return processKey(keys[i], ctx).then(function() {
+                processed = i + 1;
+                return step(i + 1);
+            });
+        }
+
+        step(0).catch(function(err) {
+            console.error('Mass translate error:', err);
+        }).then(function() {
+            var finished = processed >= keys.length;
+            progress.textContent = (finished ? I18N.done : I18N.stopped) + ': ' + processed + ' / ' + keys.length +
+                (ctx.aborted ? '. ' + I18N.tooManyErrors : '');
+            massRunning = false;
+            setMassButtons();
+        });
+    }
+
+    /**
+     * Сохраняет заполненные новые поля одного ключа (последовательно)
+     * @returns {Promise<{saved: number, failed: number}>}
+     */
+    function saveKey(key) {
+        var d = massData[key];
+        var result = { saved: 0, failed: 0 };
+        var seq = Promise.resolve();
+
+        validLanguages.forEach(function(lang) {
+            var v = d.values[lang];
+            if (!v || v.state !== 'new' || !v.value.trim()) return;
+            seq = seq.then(function() {
+                return postAjax('action=save_translation&lang=' + encodeURIComponent(lang) +
+                    '&translation=' + encodeURIComponent(v.value.trim()) + '&original=' + encodeURIComponent(key))
+                    .then(function(data) {
+                        if (data && data.success) {
+                            v.state = 'saved';
+                            result.saved++;
+                        } else {
+                            result.failed++;
+                        }
+                    })
+                    .catch(function(err) {
+                        console.error('Save error:', key, lang, err);
+                        result.failed++;
+                    });
+            });
+        });
+
+        return seq.then(function() {
+            var left = validLanguages.filter(function(lang) {
+                return d.values[lang].state === 'new';
+            }).length;
+            d.checked = false;
+            d.error = result.failed > 0;
+            d.done = result.saved > 0 && left === 0 && result.failed === 0;
+            d.partial = result.saved > 0 && !d.done;
+            return result;
+        });
+    }
+
+    function showReport(saved, failed, skipped) {
+        massEl('massReport').textContent = I18N.reportSaved + ' ' + saved + '. ' +
+            I18N.reportErrors + ' ' + failed + '.' +
+            (skipped ? ' ' + I18N.reportSkipped + ' ' + skipped + '.' : '');
+    }
+
+    function finishSaving() {
+        massSaving = false;
+        setMassButtons();
+        // Сервер сам убирает из списка ключи, переведенные на все языки
+        loadMissingTranslations();
+    }
+
+    /**
+     * Сохраняет все отмеченные ключи (последовательно, по одному запросу)
+     */
+    function saveCheckedRows() {
+        if (massRunning || massSaving) return;
+        var keys = [];
+        var skipped = 0;
+        readyKeys().forEach(function(k) {
+            if (massData[k].checked) keys.push(k); else skipped++;
+        });
+        if (!keys.length) {
+            alert(I18N.nothingToSave);
+            return;
+        }
+
+        massSaving = true;
+        setMassButtons();
+
+        var total = { saved: 0, failed: 0 };
+        var seq = Promise.resolve();
+        keys.forEach(function(k) {
+            seq = seq.then(function() {
+                return saveKey(k).then(function(res) {
+                    total.saved += res.saved;
+                    total.failed += res.failed;
+                    showReport(total.saved, total.failed, skipped);
+                });
+            });
+        });
+        seq.catch(function(err) {
+            console.error('Save all error:', err);
+        }).then(finishSaving);
+    }
+
+    massEl('massTranslateBtn').addEventListener('click', runMassTranslate);
+    massEl('massStopBtn').addEventListener('click', function() {
+        massStop = true;
+    });
+    massEl('massSaveBtn').addEventListener('click', saveCheckedRows);
+    massEl('massCheckAll').addEventListener('change', function() {
+        var on = massEl('massCheckAll').checked;
+        readyKeys().forEach(function(k) { massData[k].checked = on; });
+        decorateAllRows();
     });
 
     // 4. Инициализация
