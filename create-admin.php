@@ -157,124 +157,356 @@ if (isset($_GET['edit']) && is_string($_GET['edit'])) {
 }
 $current = $user->getCurrentUser();
 $roleLabel = fn($r) => strtolower((string)$r) === 'admin' ? 'Администратор' : 'Пользователь';
+$base = rtrim(dirname($self), '/\\') . '/';
+/** Первая буква имени для аватара (работает и без mbstring) */
+function initial($text): string
+{
+    return preg_match('/./us', trim((string)$text), $m) ? strtoupper($m[0]) : '?';
+}
+$flashClass = ['ok' => 'success', 'error' => 'danger'][$flash[0] ?? ''] ?? 'info';
 ?><!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-bs-theme="light">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>Управление пользователями - первый запуск</title>
-<style>
-    :root { --bg:#f4f6fb; --card:#fff; --text:#1f2937; --muted:#6b7280; --line:#e5e7eb; --primary:#2563eb; --danger:#dc2626; --ok:#15803d; }
-    @media (prefers-color-scheme: dark) { :root { --bg:#0f172a; --card:#1e293b; --text:#e5e7eb; --muted:#94a3b8; --line:#334155; } }
-    * { box-sizing: border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-    .warn { position:sticky; top:0; z-index:10; background:#b91c1c; color:#fff; padding:12px 20px; display:flex; gap:16px; align-items:center; justify-content:space-between; flex-wrap:wrap; box-shadow:0 2px 8px rgba(0,0,0,.3); }
-    .warn strong { font-size:16px; }
-    .warn form { margin:0; }
-    .warn button { background:#fff; color:#b91c1c; border:0; padding:8px 16px; border-radius:6px; font-weight:700; cursor:pointer; }
-    .wrap { max-width:1100px; margin:0 auto; padding:24px 16px 60px; }
-    h1 { font-size:24px; margin:0 0 4px; } .sub { color:var(--muted); margin:0 0 20px; }
-    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:20px; }
-    .stat, .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
-    .stat b { display:block; font-size:26px; } .stat span { color:var(--muted); font-size:13px; }
-    .card { margin-bottom:20px; } .card h2 { margin:0 0 14px; font-size:18px; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; align-items:end; }
-    label { display:block; font-size:13px; color:var(--muted); margin-bottom:4px; }
-    input, select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
-    .btn { display:inline-block; padding:9px 16px; border:0; border-radius:6px; background:var(--primary); color:#fff; font:inherit; cursor:pointer; text-decoration:none; }
-    .btn.sec { background:transparent; color:var(--text); border:1px solid var(--line); } .btn.red { background:var(--danger); } .btn.sm { padding:5px 10px; font-size:13px; }
-    .msg { padding:12px 16px; border-radius:8px; margin-bottom:16px; } .msg.ok { background:#dcfce7; color:#14532d; } .msg.error { background:#fee2e2; color:#7f1d1d; } .msg.note { background:#fef3c7; color:#78350f; }
-    .tablewrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; } th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
-    th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
-    .badge { padding:2px 9px; border-radius:99px; font-size:12px; font-weight:600; } .badge.admin { background:#fee2e2; color:#991b1b; } .badge.user { background:#dbeafe; color:#1e40af; }
-    .actions { display:flex; gap:6px; } .actions form { margin:0; } code { font-size:12px; color:var(--muted); }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Первый запуск - управление пользователями</title>
+    <link rel="icon" type="image/png" href="<?= h($base) ?>favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script>
+        // Тема - та же, что в админке (localStorage 'theme'); ставим до отрисовки, чтобы не мигало
+        try { document.documentElement.setAttribute('data-bs-theme', localStorage.getItem('theme') || 'light'); } catch (e) {}
+    </script>
+    <style>
+        #warnBanner { z-index: 1050; }
+        #sidebar { min-width: 230px; }
+        .avatar { width: 38px; height: 38px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; flex: none; }
+        .stat-number { font-size: 1.9rem; font-weight: 700; line-height: 1.1; }
+        .chip { font-weight: 400; }
+        @media (min-width: 992px) { #sidebar { min-height: calc(100vh - 56px); } }
+    </style>
 </head>
 <body>
-<div class="warn">
-    <strong>Внимание! После завершения настройки удалите файл create-admin.php в целях безопасности!</strong>
-    <form method="post" onsubmit="return confirm('Удалить create-admin.php с сервера? Это действие необратимо.');">
+
+<!-- Постоянное предупреждение -->
+<div id="warnBanner" class="alert alert-danger rounded-0 border-0 border-bottom border-danger mb-0 sticky-top d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 px-4" role="alert">
+    <div class="d-flex align-items-center gap-2">
+        <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+        <strong>Внимание! После завершения настройки удалите файл create-admin.php в целях безопасности!</strong>
+    </div>
+    <form method="post" class="m-0" data-confirm="Удалить create-admin.php с сервера? Это действие необратимо." data-confirm-title="Удаление create-admin.php" data-confirm-btn="Удалить файл">
         <input type="hidden" name="_token" value="<?= h($token) ?>">
         <input type="hidden" name="action" value="delete_file">
-        <button type="submit">Удалить файл</button>
+        <button type="submit" class="btn btn-danger btn-sm fw-bold">Удалить файл</button>
     </form>
 </div>
 
-<div class="wrap">
-    <h1>Управление пользователями</h1>
-    <p class="sub">Панель первого запуска: создание, изменение и удаление пользователей и администраторов без входа в систему.</p>
+<!-- Шапка -->
+<nav class="navbar navbar-expand-lg shadow bg-body-tertiary" id="navbar">
+    <div class="container-fluid px-4">
+        <span class="navbar-brand">Flit CMS &middot; Первый запуск</span>
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge text-bg-secondary">Хранилище: <?= h($cmsConfig['storage']) ?></span>
+        </div>
+    </div>
+</nav>
 
-    <?php if ($flash): ?><div class="msg <?= h($flash[0]) ?>"><?= h($flash[1]) ?></div><?php endif; ?>
-    <?php if ($admins === 0): ?><div class="msg note">В системе пока нет ни одного администратора. Создайте его в форме ниже.</div><?php endif; ?>
+<div class="d-flex flex-column flex-lg-row">
 
-    <div class="stats">
-        <div class="stat"><b><?= count($users) ?></b><span>Всего пользователей</span></div>
-        <div class="stat"><b><?= $admins ?></b><span>Администраторов</span></div>
-        <div class="stat"><b><?= count($users) - $admins ?></b><span>Обычных пользователей</span></div>
-        <div class="stat"><b><?= h($cmsConfig['storage']) ?></b><span>Хранилище данных</span></div>
+    <!-- Боковая панель -->
+    <div class="p-3 bg-body-tertiary border-end" id="sidebar">
+        <ul class="nav flex-column">
+            <li class="nav-item"><a class="nav-link text-reset" href="#" data-bs-toggle="modal" data-bs-target="#createModal">Добавить пользователя</a></li>
+            <li class="nav-item"><a class="nav-link text-reset" href="<?= h($base) ?>">Главная страница сайта</a></li>
+            <li class="nav-item"><a class="nav-link text-reset" href="<?= h($base) ?>?page=login.htm">Вход на сайт</a></li>
+        </ul>
+        <hr>
+        <div class="small text-body-secondary">
+            <div class="fw-semibold mb-1">Порядок действий</div>
+            <ol class="ps-3 mb-0">
+                <li>Создайте администратора</li>
+                <li>Войдите на сайт</li>
+                <li>Удалите этот файл</li>
+            </ol>
+        </div>
     </div>
 
-    <div class="card">
-        <h2><?= $editing ? 'Редактирование: ' . h($editing['email']) : 'Новый пользователь' ?></h2>
-        <form method="post" autocomplete="off">
-            <input type="hidden" name="_token" value="<?= h($token) ?>">
-            <input type="hidden" name="action" value="<?= $editing ? 'update' : 'create' ?>">
-            <?php if ($editing): ?><input type="hidden" name="orig_email" value="<?= h($editing['email']) ?>"><?php endif; ?>
-            <div class="grid">
-                <div><label for="email">Email</label><input id="email" type="email" name="email" required maxlength="255" value="<?= h($editing['email'] ?? '') ?>"></div>
-                <div><label for="name">Имя</label><input id="name" name="name" required maxlength="100" value="<?= h($editing['name'] ?? '') ?>"></div>
-                <div>
-                    <label for="password"><?= $editing ? 'Новый пароль (пусто - не менять)' : 'Пароль (8-72 символа)' ?></label>
-                    <input id="password" type="password" name="password" minlength="8" maxlength="72" autocomplete="new-password" <?= $editing ? '' : 'required' ?>>
+    <!-- Основной контент -->
+    <div class="flex-grow-1">
+        <div class="container-fluid p-4">
+            <h2 class="mb-1">Пользователи</h2>
+            <p class="text-body-secondary">Создание, изменение и удаление пользователей и администраторов без входа в систему.</p>
+
+            <?php if ($flash): ?>
+                <div class="alert alert-<?= h($flashClass) ?> alert-dismissible fade show" role="alert">
+                    <?= h($flash[1]) ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Закрыть"></button>
                 </div>
-                <div>
-                    <label for="role">Права доступа</label>
-                    <select id="role" name="role">
-                        <?php foreach (User::ROLES as $r): ?>
-                            <option value="<?= h($r) ?>" <?= strtolower((string)($editing['role'] ?? 'user')) === $r ? 'selected' : '' ?>><?= h($roleLabel($r)) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <button class="btn" type="submit"><?= $editing ? 'Сохранить' : 'Создать' ?></button>
-                    <?php if ($editing): ?><a class="btn sec" href="<?= h($self) ?>">Отмена</a><?php endif; ?>
-                </div>
+            <?php endif; ?>
+
+            <?php if ($admins === 0): ?>
+                <div class="alert alert-warning"><strong>Администраторов пока нет.</strong> Создайте первого кнопкой «Добавить пользователя» и выберите роль «Администратор».</div>
+            <?php else: ?>
+                <div class="alert alert-info">Администратор создан. Войдите на сайт и <strong>удалите create-admin.php</strong> (кнопка в красном баннере вверху).</div>
+            <?php endif; ?>
+
+            <!-- Статистика -->
+            <div class="row g-3 mb-3">
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-primary-subtle h-100"><div class="card-body"><div class="stat-number"><?= count($users) ?></div><div class="text-body-secondary">Всего пользователей</div></div></div></div>
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-danger-subtle h-100"><div class="card-body"><div class="stat-number"><?= $admins ?></div><div class="text-body-secondary">Администраторов</div></div></div></div>
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-success-subtle h-100"><div class="card-body"><div class="stat-number"><?= count($users) - $admins ?></div><div class="text-body-secondary">Обычных пользователей</div></div></div></div>
+                <div class="col-6 col-xl-3"><div class="card border-0 bg-secondary-subtle h-100"><div class="card-body"><div class="stat-number text-uppercase"><?= h($cmsConfig['storage']) ?></div><div class="text-body-secondary">Хранилище данных</div></div></div></div>
             </div>
-        </form>
-    </div>
 
-    <div class="card">
-        <h2>Все пользователи (<?= count($users) ?>)</h2>
-        <div class="tablewrap">
-        <table>
-            <thead><tr><th>#</th><th>Email</th><th>Имя</th><th>Роль</th><th>Права</th><th>Пароль</th><th></th></tr></thead>
-            <tbody>
-            <?php foreach ($users as $i => $u):
-                $isAdm = strtolower((string)($u['role'] ?? '')) === 'admin'; ?>
-                <tr>
-                    <td><?= $i + 1 ?></td>
-                    <td><?= h($u['email'] ?? '') ?><?= ($current && strtolower((string)$current['email']) === strtolower((string)$u['email'])) ? ' <code>(вы)</code>' : '' ?></td>
-                    <td><?= h($u['name'] ?? '') ?></td>
-                    <td><span class="badge <?= $isAdm ? 'admin' : 'user' ?>"><?= h($roleLabel($u['role'] ?? '')) ?></span></td>
-                    <td><?= $isAdm ? 'Полный доступ: админ-панель, пользователи, настройки, журнал' : 'Обычный доступ: сайт и профиль' ?></td>
-                    <td><code><?= strpos((string)($u['password'] ?? ''), '$2y$') === 0 ? 'bcrypt (хеш скрыт)' : 'нестандартный хеш' ?></code></td>
-                    <td class="actions">
-                        <a class="btn sec sm" href="<?= h($self) ?>?edit=<?= h(rawurlencode((string)$u['email'])) ?>">Изменить</a>
-                        <form method="post" onsubmit="return confirm('Удалить этого пользователя?');">
-                            <input type="hidden" name="_token" value="<?= h($token) ?>">
-                            <input type="hidden" name="action" value="delete">
-                            <input type="hidden" name="email" value="<?= h($u['email']) ?>">
-                            <button class="btn red sm" type="submit">Удалить</button>
-                        </form>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            <?php if (!$users): ?><tr><td colspan="7" style="color:var(--muted)">Пользователей пока нет.</td></tr><?php endif; ?>
-            </tbody>
-        </table>
+            <!-- Список -->
+            <div class="card rounded shadow-none" id="users">
+                <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <span class="fw-semibold">Все пользователи (<?= count($users) ?>)</span>
+                    <div class="d-flex gap-2">
+                        <input type="search" id="userSearch" class="form-control form-control-sm" placeholder="Поиск по email или имени" style="min-width:220px">
+                        <button type="button" class="btn btn-success btn-sm text-nowrap" data-bs-toggle="modal" data-bs-target="#createModal">+ Добавить пользователя</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                            <tr><th class="ps-3">Пользователь</th><th>Роль</th><th>Права доступа</th><th>Пароль</th><th class="text-end pe-3">Действия</th></tr>
+                        </thead>
+                        <tbody id="usersBody">
+                        <?php foreach ($users as $u):
+                            $isAdm = strtolower((string)($u['role'] ?? '')) === 'admin';
+                            $isMe  = $current && strtolower((string)$current['email']) === strtolower((string)$u['email']); ?>
+                            <tr data-search="<?= h(strtolower(($u['email'] ?? '') . ' ' . ($u['name'] ?? ''))) ?>">
+                                <td class="ps-3">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="avatar <?= $isAdm ? 'bg-danger-subtle text-danger-emphasis' : 'bg-primary-subtle text-primary-emphasis' ?>"><?= h(initial($u['name'] ?? '')) ?></span>
+                                        <div>
+                                            <div class="fw-semibold"><?= h($u['name'] ?? '') ?><?= $isMe ? ' <span class="badge text-bg-light border">вы</span>' : '' ?></div>
+                                            <div class="small text-body-secondary"><?= h($u['email'] ?? '') ?></div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td><span class="badge <?= $isAdm ? 'text-bg-danger' : 'text-bg-primary' ?>"><?= h($roleLabel($u['role'] ?? '')) ?></span></td>
+                                <td>
+                                    <?php foreach (($isAdm ? ['Админ-панель', 'Пользователи', 'Настройки', 'Журнал', 'Переводы'] : ['Сайт', 'Профиль']) as $perm): ?>
+                                        <span class="badge chip bg-body-secondary text-body border"><?= h($perm) ?></span>
+                                    <?php endforeach; ?>
+                                </td>
+                                <td><span class="small text-body-secondary"><?= strpos((string)($u['password'] ?? ''), '$2y$') === 0 ? 'bcrypt, хеш скрыт' : 'нестандартный хеш' ?></span></td>
+                                <td class="text-end pe-3 text-nowrap">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm js-edit"
+                                            data-email="<?= h($u['email'] ?? '') ?>" data-name="<?= h($u['name'] ?? '') ?>" data-role="<?= h(strtolower((string)($u['role'] ?? 'user'))) ?>">Изменить</button>
+                                    <form method="post" class="d-inline" data-confirm="Удалить пользователя «<?= h($u['email'] ?? '') ?>»? Это действие необратимо." data-confirm-title="Удаление пользователя" data-confirm-btn="Удалить">
+                                        <input type="hidden" name="_token" value="<?= h($token) ?>">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="email" value="<?= h($u['email'] ?? '') ?>">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="noUsers" class="text-center text-body-secondary py-4 <?= $users ? 'd-none' : '' ?>"><?= $users ? 'Ничего не найдено.' : 'Пользователей пока нет.' ?></div>
+            </div>
         </div>
     </div>
 </div>
+
+<!-- Подвал -->
+<footer id="footer" class="text-center py-4 shadow mt-4 bg-body-tertiary">
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center">
+            <p class="mb-0">&copy; Flit CMS</p>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="themeSwitch">
+                <label class="form-check-label" id="themeLabel" for="themeSwitch">Светлая тема</label>
+            </div>
+        </div>
+    </div>
+</footer>
+
+<?php
+/** Поля формы пользователя (одинаковые для создания и изменения) */
+function userFields(string $prefix, bool $passwordRequired): void { ?>
+    <div class="mb-3">
+        <label for="<?= $prefix ?>Email" class="form-label">Email</label>
+        <input type="email" class="form-control" id="<?= $prefix ?>Email" name="email" required maxlength="255" autocomplete="off">
+        <div class="invalid-feedback">Введите корректный email.</div>
+    </div>
+    <div class="mb-3">
+        <label for="<?= $prefix ?>Name" class="form-label">Имя</label>
+        <input type="text" class="form-control" id="<?= $prefix ?>Name" name="name" required maxlength="100" autocomplete="off">
+        <div class="invalid-feedback">Укажите имя (до 100 символов).</div>
+    </div>
+    <div class="mb-3">
+        <label for="<?= $prefix ?>Password" class="form-label"><?= $passwordRequired ? 'Пароль' : 'Новый пароль' ?> <span class="text-body-secondary small"><?= $passwordRequired ? '(8-72 символа)' : '(оставьте пустым, чтобы не менять)' ?></span></label>
+        <div class="input-group has-validation">
+            <input type="password" class="form-control" id="<?= $prefix ?>Password" name="password" minlength="8" maxlength="72" autocomplete="new-password" <?= $passwordRequired ? 'required' : '' ?>>
+            <button class="btn btn-outline-secondary js-toggle-pass" type="button" data-target="<?= $prefix ?>Password" title="Показать / скрыть">Показать</button>
+            <button class="btn btn-outline-secondary js-gen-pass" type="button" data-target="<?= $prefix ?>Password" title="Сгенерировать надёжный пароль">Сгенерировать</button>
+            <div class="invalid-feedback">Пароль должен содержать от 8 до 72 символов.</div>
+        </div>
+    </div>
+    <div class="mb-1">
+        <label for="<?= $prefix ?>Role" class="form-label">Права доступа</label>
+        <select class="form-select js-role" id="<?= $prefix ?>Role" name="role">
+            <option value="user">Пользователь</option>
+            <option value="admin">Администратор</option>
+        </select>
+        <div class="form-text js-role-help">Обычный доступ: сайт и личный профиль.</div>
+    </div>
+<?php } ?>
+
+<!-- Модальное окно: создание -->
+<div class="modal fade" id="createModal" tabindex="-1" aria-labelledby="createModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="post" class="modal-content needs-validation" novalidate>
+            <input type="hidden" name="_token" value="<?= h($token) ?>">
+            <input type="hidden" name="action" value="create">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createModalLabel">Добавить пользователя</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body"><?php userFields('create', true); ?></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="submit" class="btn btn-success">Создать</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Модальное окно: изменение -->
+<div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true" <?= $editing ? 'data-auto-open="1"' : '' ?>>
+    <div class="modal-dialog">
+        <form method="post" class="modal-content needs-validation" novalidate>
+            <input type="hidden" name="_token" value="<?= h($token) ?>">
+            <input type="hidden" name="action" value="update">
+            <input type="hidden" name="orig_email" id="editOrig" value="<?= h($editing['email'] ?? '') ?>">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editModalLabel">Изменить пользователя</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body"><?php userFields('edit', false); ?></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Модальное окно: подтверждение -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="confirmTitle">Подтверждение</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button></div>
+            <div class="modal-body" id="confirmText"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-danger" id="confirmOk">Удалить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function () {
+    var $ = function (s, r) { return (r || document).querySelector(s); };
+    var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+    var hasBs = !!window.bootstrap;
+
+    // --- Тема (как в админке) ---
+    var sw = $('#themeSwitch'), label = $('#themeLabel');
+    function applyTheme(t) {
+        document.documentElement.setAttribute('data-bs-theme', t);
+        label.textContent = t === 'dark' ? 'Тёмная тема' : 'Светлая тема';
+    }
+    var saved = 'light'; try { saved = localStorage.getItem('theme') || 'light'; } catch (e) {}
+    sw.checked = saved === 'dark'; applyTheme(saved);
+    sw.addEventListener('change', function () {
+        var t = sw.checked ? 'dark' : 'light'; applyTheme(t);
+        try { localStorage.setItem('theme', t); } catch (e) {}
+    });
+
+    // --- Поиск ---
+    var search = $('#userSearch'), rows = $$('#usersBody tr'), none = $('#noUsers');
+    search.addEventListener('input', function () {
+        var q = search.value.trim().toLowerCase(), shown = 0;
+        rows.forEach(function (r) { var ok = r.getAttribute('data-search').indexOf(q) !== -1; r.classList.toggle('d-none', !ok); if (ok) shown++; });
+        if (rows.length) { none.textContent = 'Ничего не найдено.'; none.classList.toggle('d-none', shown > 0); }
+    });
+
+    // --- Пароль: показать / сгенерировать ---
+    $$('.js-toggle-pass').forEach(function (b) {
+        b.addEventListener('click', function () {
+            var i = document.getElementById(b.dataset.target);
+            var show = i.type === 'password'; i.type = show ? 'text' : 'password'; b.textContent = show ? 'Скрыть' : 'Показать';
+        });
+    });
+    $$('.js-gen-pass').forEach(function (b) {
+        b.addEventListener('click', function () {
+            var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_!@#$%', out = '', buf = new Uint32Array(16);
+            crypto.getRandomValues(buf);
+            buf.forEach(function (n) { out += chars[n % chars.length]; });
+            var i = document.getElementById(b.dataset.target); i.value = out; i.type = 'text';
+            var t = $('.js-toggle-pass[data-target="' + b.dataset.target + '"]'); if (t) t.textContent = 'Скрыть';
+        });
+    });
+
+    // --- Подсказка по роли ---
+    var help = { user: 'Обычный доступ: сайт и личный профиль.', admin: 'Полный доступ: админ-панель, пользователи, настройки, журнал, переводы.' };
+    $$('.js-role').forEach(function (sel) {
+        var upd = function () { sel.parentNode.querySelector('.js-role-help').textContent = help[sel.value] || ''; };
+        sel.addEventListener('change', upd); upd();
+    });
+
+    // --- Изменение: заполняем форму ---
+    function fillEdit(email, name, role) {
+        $('#editOrig').value = email; $('#editEmail').value = email; $('#editName').value = name;
+        $('#editPassword').value = ''; $('#editPassword').type = 'password';
+        $('#editRole').value = role === 'admin' ? 'admin' : 'user';
+        $('#editRole').dispatchEvent(new Event('change'));
+        $('#editModalLabel').textContent = 'Изменить: ' + email;
+    }
+    $$('.js-edit').forEach(function (b) {
+        b.addEventListener('click', function () {
+            fillEdit(b.dataset.email, b.dataset.name, b.dataset.role);
+            if (hasBs) new bootstrap.Modal($('#editModal')).show();
+        });
+    });
+    var em = $('#editModal');
+    if (em.dataset.autoOpen && hasBs) {
+        var row = $$('.js-edit').filter(function (b) { return b.dataset.email.toLowerCase() === $('#editOrig').value.toLowerCase(); })[0];
+        if (row) { fillEdit(row.dataset.email, row.dataset.name, row.dataset.role); new bootstrap.Modal(em).show(); }
+    }
+
+    // --- Проверка форм и защита от двойной отправки ---
+    $$('form.needs-validation').forEach(function (f) {
+        f.addEventListener('submit', function (e) {
+            if (!f.checkValidity()) { e.preventDefault(); e.stopPropagation(); f.classList.add('was-validated'); return; }
+            var btn = f.querySelector('button[type=submit]'); if (btn) { btn.disabled = true; }
+        });
+    });
+
+    // --- Подтверждение опасных действий ---
+    var pending = null;
+    $$('form[data-confirm]').forEach(function (f) {
+        f.addEventListener('submit', function (e) {
+            e.preventDefault();
+            if (!hasBs) { if (confirm(f.dataset.confirm)) f.submit(); return; }
+            pending = f;
+            $('#confirmTitle').textContent = f.dataset.confirmTitle || 'Подтверждение';
+            $('#confirmText').textContent = f.dataset.confirm;
+            $('#confirmOk').textContent = f.dataset.confirmBtn || 'Подтвердить';
+            bootstrap.Modal.getOrCreateInstance($('#confirmModal')).show();
+        });
+    });
+    $('#confirmOk').addEventListener('click', function () { if (pending) { var f = pending; pending = null; f.submit(); } });
+})();
+</script>
 </body>
 </html>
