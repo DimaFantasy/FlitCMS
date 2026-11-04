@@ -46,8 +46,9 @@ class User
                 'lifetime' => $CookieLifetime, // Время жизни в секундах
                 'path'     => '/',
                 'domain'   => '',
-                'secure'   => false, // Отключено
-                'httponly' => false, // Отключено
+                'secure'   => !empty($_SERVER['HTTPS']), // Только по HTTPS, если сайт работает по HTTPS
+                'httponly' => true,  // Кука недоступна из JavaScript
+                'samesite' => 'Lax',
             ];
             session_set_cookie_params($cookieParams);
             session_start();
@@ -219,8 +220,9 @@ class User
                 'expires'  => $expiration,
                 'path'     => '/',
                 'domain'   => '',
-                'secure'   => false,
-                'httponly' => false,
+                'secure'   => !empty($_SERVER['HTTPS']),
+                'httponly' => true,
+                'samesite' => 'Lax',
             ]
         );
         // logMessage('Данные пользователя установлены в сессию: ' . $userData['email'], 'INFO');

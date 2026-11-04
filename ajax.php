@@ -80,6 +80,14 @@ function handleAction($action, $user, $storage)
 {
     $response = ['success' => false, 'message' => t('Unknown action')];
 
+    // Действия, доступные без входа. Все остальные - только для администратора.
+    $publicActions = ['login', 'register_user', 'sendMessage', 'get_valid_languages'];
+    if (!in_array($action, $publicActions, true) && !$user->isCurrentRole('admin')) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => t('Access denied')]);
+        exit;
+    }
+
     try {
         switch ($action) {
             // Регистрация нового пользователя
@@ -367,6 +375,16 @@ function updateSettings()
 
     if (empty($key) || !isset($value)) {
         throw new Exception(t('Key and value are required'));
+    }
+
+    // Ключ: только буквы, цифры, _ и разделитель ## (он попадает в регулярное выражение)
+    if (!preg_match('/^[A-Za-z0-9_]+(##[A-Za-z0-9_]+)*$/', $key)) {
+        throw new Exception(t('Invalid key'));
+    }
+    // Значение подставляется в PHP-файл в одинарных кавычках: убираем переводы строк и экранируем \ и '
+    $value = str_replace(["\r", "\n"], '', (string)$value);
+    if ($value !== 'true' && $value !== 'false') {
+        $value = str_replace(['\\', "'"], ['\\\\', "\\'"], $value);
     }
 
     // Путь к файлу конфигурации
