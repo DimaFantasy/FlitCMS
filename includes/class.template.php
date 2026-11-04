@@ -69,8 +69,36 @@ class Template
         ];
     }
 
+    /**
+     * Проверяет имя шаблона. Имя приходит из адресной строки (?page=...), поэтому допускаем
+     * только вид "name.htm" или "dir/name.htm": без "..", абсолютных путей и посторонних расширений.
+     * Иначе через ?page=../../data/user.json можно было бы прочитать любой файл на сервере
+     * (а так как скомпилированный шаблон выполняется как PHP - и запустить код).
+     *
+     * @return string|false Нормализованное имя или false
+     */
+    private function sanitizeTemplateName($tplName)
+    {
+        if (! is_string($tplName)) {
+            return false;
+        }
+        $tplName = str_replace('\\', '/', trim($tplName));
+        if (strlen($tplName) > 120 ||
+            ! preg_match('#^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\.html?$#', $tplName)) {
+            return false;
+        }
+        return $tplName;
+    }
+
     public function compile($tplName)
     {
+        $cleanName = $this->sanitizeTemplateName($tplName);
+        if ($cleanName === false) {
+            logMessage('Rejected template name: ' . (is_string($tplName) ? $tplName : gettype($tplName)), 'WARNING');
+            return false;
+        }
+        $tplName = $cleanName;
+
         // Формируем путь к файлу шаблона
         $templateFile = $this->joinPaths(
             BOARD_ROOT,
@@ -78,6 +106,15 @@ class Template
             $this->tplVerDir,
             $tplName
         );
+
+        // Страховка: файл обязан лежать внутри папки шаблонов (с учётом символических ссылок)
+        $baseDir = realpath($this->joinPaths(BOARD_ROOT, $this->tplRootDir, $this->tplVerDir));
+        $realTpl = realpath($templateFile);
+        if ($baseDir === false || $realTpl === false ||
+            strpos($realTpl, $baseDir . DIRECTORY_SEPARATOR) !== 0) {
+            logMessage("Template file not found: {$tplName}", "ERROR");
+            return false;
+        }
         // Формируем путь к файлу кэша
         $cacheFile = $this->joinPaths(
             BOARD_ROOT,
@@ -109,18 +146,20 @@ class Template
         // Создаем директорию для кэша
         $cacheDir = dirname($cacheFile);
         if (! is_dir($cacheDir)) {
-            if (! mkdir($cacheDir, 0777, true)) {
+            if (! mkdir($cacheDir, 0755, true)) {
                 logMessage("Failed to create cache directory: {$cacheDir}", "ERROR");
                 return false;
             }
         }
+        // Кэш не должен открываться из браузера
+        protectDirectory($this->joinPaths(BOARD_ROOT, $this->tplCacheDir));
         // Сохраняем скомпилированный шаблон
         if (file_put_contents($cacheFile, $compiledContent) === false) {
             logMessage("Failed to write cache file: {$cacheFile}", "ERROR");
             return false;
         }
-        // Устанавливаем права (если возможно)
-        @chmod($cacheFile, 0777);
+        // Устанавливаем права (если возможно): запись только владельцу
+        @chmod($cacheFile, 0644);
         // Возвращаем путь к скомпилированному файлу
         return $cacheFile;
     }
@@ -141,8 +180,12 @@ class Template
             RecursiveIteratorIterator::CHILD_FIRST
         );
 
-        // Удаляем все файлы и поддиректории
+        // Удаляем все файлы и поддиректории (кроме файлов защиты папки)
         foreach ($items as $item) {
+            if (in_array($item->getFilename(), ['.htaccess', 'index.html'], true) &&
+                $item->getPath() === realpath($cacheDir)) {
+                continue;
+            }
             try {
                 if ($item->isDir()) {
                     // Удаляем директорию

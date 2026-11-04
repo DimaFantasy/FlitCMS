@@ -21,14 +21,9 @@
                     <input type="text" class="form-control" id="name" name="name" required>
                     <div id="nameError" class="alert alert-danger mt-2" style="display:none;" role="alert"></div>
                 </div>
-                <div class="mb-3">
-                    <label for="role" class="form-label">{{t('Role')}}</label>
-                    <select class="form-control" id="role" name="role" required>
-                        <option value="user">{{t('User')}}</option>
-                        <option value="admin">{{t('Admin')}}</option>
-                    </select>
-                    <div id="roleError" class="alert alert-danger mt-2" style="display:none;" role="alert"></div>
-                </div>
+                <!-- Публичная регистрация создаёт только обычного пользователя; роль admin выдаётся только из админ-панели -->
+                <input type="hidden" id="role" name="role" value="user">
+                <div id="roleError" class="alert alert-danger mt-2" style="display:none;" role="alert"></div>
                 <button type="submit" class="btn btn-primary">{{t('Register')}}</button>
             </form>
         </div>

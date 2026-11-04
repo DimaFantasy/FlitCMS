@@ -1,6 +1,32 @@
 <?php
 
 /**
+ * Закрывает папку от прямого доступа из браузера (Apache: .htaccess, любой сервер: пустой index.html).
+ * Для nginx всё равно нужны правила из SECURITY.md - .htaccess он не читает.
+ *
+ * @param string $dir Путь к папке
+ */
+function protectDirectory($dir)
+{
+    $dir = rtrim((string)$dir, '/\\');
+    if ($dir === '' || !is_dir($dir)) {
+        return;
+    }
+    $htaccess = $dir . DIRECTORY_SEPARATOR . '.htaccess';
+    if (!file_exists($htaccess)) {
+        @file_put_contents(
+            $htaccess,
+            "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
+            "<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n"
+        );
+    }
+    $index = $dir . DIRECTORY_SEPARATOR . 'index.html';
+    if (!file_exists($index)) {
+        @file_put_contents($index, '');
+    }
+}
+
+/**
  * Класс Logger реализует систему логирования с ротацией лог-файлов.
  */
 class Logger
@@ -36,10 +62,11 @@ class Logger
 
         // Создаем папку для логов, если её нет
         if (!is_dir($this->logDir)) {
-            if (!mkdir($this->logDir, 0777, true)) {
+            if (!mkdir($this->logDir, 0750, true)) {
                 throw new Exception("Не удалось создать директорию для логов: {$this->logDir}");
             }
         }
+        protectDirectory($this->logDir);
     }
 
     /**
@@ -72,15 +99,23 @@ class Logger
     public function logMessage($message, $level = 'INFO', $logfile = null)
     {
         // Если имя файла не указано, используем файл по умолчанию
-        $logfile = $logfile ?? $this->defaultLogFile;
+        $logfile = basename($logfile ?? $this->defaultLogFile);
         $logpath = $this->logDir . $logfile;
+
+        // В сообщения попадают данные от пользователя (email, заголовки): убираем переводы строк
+        // и управляющие символы (иначе можно подделывать строки журнала) и ограничиваем длину
+        $message = preg_replace('/[\x00-\x1F\x7F]+/', ' ', (string)$message);
+        $level   = preg_replace('/[^A-Za-z]/', '', (string)$level);
+        if (strlen($message) > 2000) {
+            $message = (function_exists('mb_strcut') ? mb_strcut($message, 0, 2000, 'UTF-8') : substr($message, 0, 2000)) . '...';
+        }
 
         // Формируем строку для записи в лог
         $timestamp = date('Y-m-d H:i:s');
         $logMessage = "[$timestamp] [$level] $message" . PHP_EOL;
 
         // Записываем сообщение в лог-файл
-        file_put_contents($logpath, $logMessage, FILE_APPEND);
+        file_put_contents($logpath, $logMessage, FILE_APPEND | LOCK_EX);
 
         // Проверяем, не нужно ли выполнить ротацию логов
         $this->rotateLogs($logfile);

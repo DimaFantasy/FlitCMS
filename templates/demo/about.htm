@@ -555,6 +555,7 @@ var timeCounter = 0;  // Счетчик времени для меток
 var maxPoints = 60; // Максимальное количество точек на графике
 var isRequestPending = false; // Флаг для отслеживания состояния запроса
 var abortController = null; // Контроллер для отмены запроса
+var statsForbidden = false; // stats.php доступен только администратору: для остальных опрос отключаем
 
 function updateStats() {
     if (isRequestPending) return; // Если запрос уже выполняется, выходим
@@ -574,6 +575,7 @@ function updateStats() {
     fetch('stats.php', { signal: abortController.signal })
         .then(response => response.json())
         .then(data => {
+            if (!data || data.error) { statsForbidden = true; return; } // нет доступа - график не обновляем
             // Обновляем график CPU и RAM
             if (chartCpuRam.data.labels.length >= maxPoints) {
                 chartCpuRam.data.labels.shift();
@@ -599,7 +601,7 @@ function updateStats() {
 
             const requestDuration = Date.now() - startTime;
             const delay = requestDuration < 1000 ? 1000 - requestDuration : 0;
-            setTimeout(updateStats, delay); // Запускаем следующий запрос с задержкой
+            if (!statsForbidden) setTimeout(updateStats, delay); // Запускаем следующий запрос с задержкой
         });
 }
 

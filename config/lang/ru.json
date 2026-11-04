@@ -248,5 +248,12 @@
     "Confirm Clear Log": "Подтвердите удаление журнала",
     "Save changes": "Сохранить изменения",
     "Understood": "Понял",
-    "Message": "Сообщение"
+    "Message": "Сообщение",
+    "Too many login attempts. Try again later.": "Слишком много попыток входа. Повторите позже.",
+    "Cannot remove or demote the last administrator": "Нельзя удалить или понизить последнего администратора",
+    "Invalid email address": "Некорректный адрес email",
+    "Password must be between 8 and 72 characters": "Пароль должен содержать от 8 до 72 символов",
+    "Invalid key": "Недопустимый ключ",
+    "Value is too long": "Слишком длинное значение",
+    "Service temporarily unavailable": "Сервис временно недоступен"
 }

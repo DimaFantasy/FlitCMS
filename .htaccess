@@ -1,0 +1,12 @@
+# Закрываем служебные файлы и листинг папок (Apache). Для nginx см. SECURITY.md
+Options -Indexes
+
+<FilesMatch "\.(py|md|psd|log|json|txt|bak|zip|ini|sql)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

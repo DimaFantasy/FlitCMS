@@ -182,5 +182,12 @@
     "Confirm Clear Log": "დაადასტურეთ მკაფიო ჟურნალი",
     "Save changes": "ცვლილებების დაზოგვა",
     "Understood": "გასაგები",
-    "Message": "შეტყობინება"
+    "Message": "შეტყობინება",
+    "Too many login attempts. Try again later.": "შესვლის მეტისმეტად ბევრი მცდელობა. სცადეთ მოგვიანებით.",
+    "Cannot remove or demote the last administrator": "ბოლო ადმინისტრატორის წაშლა ან როლის შემცირება შეუძლებელია",
+    "Invalid email address": "არასწორი ელფოსტის მისამართი",
+    "Password must be between 8 and 72 characters": "პაროლი უნდა შეიცავდეს 8-დან 72 სიმბოლომდე",
+    "Invalid key": "არასწორი გასაღები",
+    "Value is too long": "მნიშვნელობა ზედმეტად გრძელია",
+    "Service temporarily unavailable": "სერვისი დროებით მიუწვდომელია"
 }

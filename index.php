@@ -4,6 +4,11 @@ define('BOARD', true);
 // Устанавливаем путь к корневой директории
 define('BOARD_ROOT', __DIR__);
 
+// Базовые защитные заголовки
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: SAMEORIGIN');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+
 // Подключаем основные функции
 require_once 'includes/class.logger.php';
 require_once 'includes/class.user.php';
@@ -43,8 +48,10 @@ if ($storageType === 'mysql') {
             $cmsConfig['userCookeName']
         );
         $dataStorage = new MysqlTableStorage($cmsConfig);
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         logMessage("Ошибка подключения к базе данных: " . $e->getMessage(), 'ERROR');
+        http_response_code(503);
+        exit('Service temporarily unavailable');
     }
 } elseif ($storageType === 'json') {
     // Используем JSON-файл для хранения пользователей
@@ -60,21 +67,25 @@ if ($storageType === 'mysql') {
     $dataStorage = new JsonTableStorage($cmsConfig['json']);
 } else {
     logMessage("Неизвестный тип хранилища: $storageType", 'ERROR');
+    http_response_code(503);
+    exit('Service temporarily unavailable');
 }
 
 // Общий заголовок для всех страниц
 $DESCRIPTION = $cmsConfig['siteName'] . (!empty($cmsConfig['version']) ? ' v' . $cmsConfig['version'] : '');
 // Определяем активную страницу из параметра URL
-$ACTIVE_PAGE = $_GET['page'] ?? 'index.htm'; // По умолчанию загружаем главную страницу
+// Принимаем только строку (page[]=... иначе приводит к ошибке типов); само имя проверяет Template::compile()
+$ACTIVE_PAGE = (isset($_GET['page']) && is_string($_GET['page'])) ? $_GET['page'] : 'index.htm'; // По умолчанию загружаем главную страницу
 
 // http://localhost/?page=admin&isAdmin
 // Проверяем, является ли пользователь администратором и передан ли параметр isAdmin если да, то подключаем админский шаблон
-$currentTplDir = ($user->isCurrentRole('Admin') && isset($_GET['isAdmin']))
+$isAdminRequest = isset($_GET['isAdmin']) && $user->isAdmin(); // проверка по хранилищу, а не по роли в сессии
+$currentTplDir = $isAdminRequest
     ? $cmsConfig['tplAdminDir'] // Папка для админки
     : $cmsConfig['tplDir']; // Стандартная папка
 
 // Если пытаются зайти в админ панель а пользователь НЕ администратор, перенаправляем на index.htm
-if (isset($_GET['isAdmin']) && !$user->isCurrentRole('Admin')) {
+if (isset($_GET['isAdmin']) && !$isAdminRequest) {
     $ACTIVE_PAGE = 'index.htm';
     $currentTplDir = $cmsConfig['tplDir']; // Стандартная папка
 }    

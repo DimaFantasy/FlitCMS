@@ -3,6 +3,8 @@
 define('BOARD', true);
 define('BOARD_ROOT', __DIR__);
 
+header('X-Content-Type-Options: nosniff');
+
 // Подключение зависимостей
 require_once 'includes/class.logger.php';
 require_once 'includes/class.user.php';
@@ -33,6 +35,17 @@ function t($key, $lang = null, $trackMissing = true)
     return Translator::translate($key, $lang, $trackMissing);
 }
 
+/**
+ * Ответ "сервис недоступен": без подробностей об ошибке (они остаются в журнале)
+ */
+function respondUnavailable()
+{
+    http_response_code(503);
+    header('Content-Type: application/json');
+    echo json_encode(['success' => false, 'message' => t('Service temporarily unavailable')]);
+    exit;
+}
+
 // Определяем тип хранилища
 $storageType = $cmsConfig['storage'];
 $storage = null;
@@ -49,8 +62,9 @@ if ($storageType === 'mysql') {
             $cmsConfig['userCookeName']
         );
         $dataStorage = new MysqlTableStorage($cmsConfig);
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         logMessage("Ошибка подключения к базе данных: " . $e->getMessage(), 'ERROR');
+        respondUnavailable();
     }
 } elseif ($storageType === 'json') {
     // Используем JSON-файл для хранения пользователей
@@ -66,6 +80,7 @@ if ($storageType === 'mysql') {
     $dataStorage = new JsonTableStorage($cmsConfig['json']);
 } else {
     logMessage("Неизвестный тип хранилища: $storageType", 'ERROR');
+    respondUnavailable();
 }
 
 /**
@@ -82,7 +97,7 @@ function handleAction($action, $user, $storage)
 
     // Действия, доступные без входа. Все остальные - только для администратора.
     $publicActions = ['login', 'register_user', 'sendMessage', 'get_valid_languages'];
-    if (!in_array($action, $publicActions, true) && !$user->isCurrentRole('admin')) {
+    if (!in_array($action, $publicActions, true) && !$user->isAdmin()) { // проверка по хранилищу, а не по роли в сессии
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => t('Access denied')]);
         exit;
@@ -175,13 +190,13 @@ function handleAction($action, $user, $storage)
                 $response = clearCache();
                 break;
         }
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         logMessage('Ошибка в действии ' . $action . ': ' . $e->getMessage(), 'ERROR');
+        // Пользователю показываем только текст "своих" исключений CMS (Exception с переведённым сообщением).
+        // Ошибки БД и PHP (PDOException, TypeError и т.п.) остаются в журнале.
         $response = [
             'success' => false,
-            'message' => $e->getMessage(),
-            'action' => $action,
-            'errorCode' => $e->getCode()
+            'message' => get_class($e) === 'Exception' ? $e->getMessage() : t('Unknown error occurred'),
         ];
     }
 
@@ -190,16 +205,60 @@ function handleAction($action, $user, $storage)
 }
 
 // Функция для регистрации пользователя
+/**
+ * Убирает из данных пользователя всё, что нельзя отдавать клиенту (хеш пароля)
+ */
+function publicUserData($userData)
+{
+    if (is_array($userData)) {
+        unset($userData['password']);
+    }
+    return $userData;
+}
+
+/**
+ * true, если $email - единственный администратор в системе
+ */
+function isLastAdmin($user, $email)
+{
+    $admins = array_filter($user->getAllUsers(), function ($u) {
+        return strtolower((string)($u['role'] ?? '')) === 'admin';
+    });
+    if (count($admins) !== 1) {
+        return false;
+    }
+    $only = reset($admins);
+    return strtolower((string)($only['email'] ?? '')) === strtolower((string)$email);
+}
+
 function registerUser($user)
 {
-    $email = $_POST['email'] ?? '';
-    $password = $_POST['password'] ?? '';
-    $name = $_POST['name'] ?? '';
-    $role = $_POST['role'] ?? 'USER';
+    $email = strtolower(trim((string)($_POST['email'] ?? '')));
+    $password = (string)($_POST['password'] ?? '');
+    $name = trim((string)($_POST['name'] ?? ''));
     $autoLogin = isset($_POST['autoLogin']) ? filter_var($_POST['autoLogin'], FILTER_VALIDATE_BOOLEAN) : true;
 
-    if (empty($email) || empty($password) || empty($name)) {
+    // Роль может задать ТОЛЬКО администратор (форма "Добавить пользователя" в админке).
+    // Для всех остальных роль всегда 'user': иначе любой посетитель мог бы зарегистрироваться администратором.
+    $role = 'user';
+    if ($user->isAdmin()) {
+        $requested = strtolower(trim((string)($_POST['role'] ?? 'user')));
+        $role = in_array($requested, User::ROLES, true) ? $requested : 'user';
+        $autoLogin = false; // администратор не должен "переключаться" на созданного пользователя
+    }
+    // Остальным - всегда 'user'. Первого администратора создаём через create-admin.php (см. README)
+
+    if ($email === '' || $password === '' || $name === '') {
         throw new Exception(t('Please fill in all fields'));
+    }
+    if (strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        throw new Exception(t('Invalid email address'));
+    }
+    if (strlen($password) < 8 || strlen($password) > 72) {
+        throw new Exception(t('Password must be between 8 and 72 characters'));
+    }
+    if (textLength($name) > 100) {
+        throw new Exception(t('Value is too long'));
     }
 
     $registrationStatus = $user->register([
@@ -230,14 +289,15 @@ function registerUser($user)
 // Функция для получения пользователя
 function getUser($user)
 {
-    $email = $_POST['email'] ?? '';
+    $email = trim((string)($_POST['email'] ?? ''));
     if (empty($email)) {
         throw new Exception(t('Email is not specified'));
     }
 
-    $user = $user->getUserByEmail($email);
-    if ($user) {
-        return ['success' => true, 'user' => $user];
+    $found = $user->getUserByEmail($email);
+    if ($found) {
+        // Хеш пароля клиенту не отдаём
+        return ['success' => true, 'user' => publicUserData($found)];
     } else {
         return ['success' => false, 'message' => t('User not found')];
     }
@@ -246,10 +306,15 @@ function getUser($user)
 // Функция для удаления пользователя
 function deleteUser($user)
 {
-    $email = $_POST['email'] ?? '';
+    $email = trim((string)($_POST['email'] ?? ''));
 
     if (empty($email)) {
         throw new Exception(t('Email is not specified'));
+    }
+
+    // Нельзя удалить последнего администратора - иначе доступ к админке будет потерян
+    if (isLastAdmin($user, $email)) {
+        throw new Exception(t('Cannot remove or demote the last administrator'));
     }
 
     if ($user->deleteUser($email)) {
@@ -262,8 +327,8 @@ function deleteUser($user)
 // Функция для обновления пользователя
 function updateUser($user)
 {
-    $data = json_decode($_POST['data'], true); // Условие для поиска записи
-    $dataUpdate = json_decode($_POST['dataUpdate'], true); // Данные для обновления
+    $data = json_decode((string)($_POST['data'] ?? ''), true); // Условие для поиска записи
+    $dataUpdate = json_decode((string)($_POST['dataUpdate'] ?? ''), true); // Данные для обновления
 
     // Убедиться, что json_decode() не возвращает null
     if (!is_array($data) || !is_array($dataUpdate)) {
@@ -272,34 +337,46 @@ function updateUser($user)
     }
 
     // Проверка наличия обязательных полей
-    if (!isset($data['email']) || !isset($dataUpdate['name']) || !isset($dataUpdate['role'])) {
+    if (!isset($data['email']) || !is_string($data['email']) || !isset($dataUpdate['name']) || !isset($dataUpdate['role'])) {
         // Ошибка в отсутствии обязательных полей
         return ['success' => false, 'message' => t('Missing required fields')];
     }
 
-    try {
-        // Используем метод updateRecord
-        $updatedCount = $user->updateRecord($data, $dataUpdate);
-        if ($updatedCount > 0) {
-            return ['success' => true, 'message' => t('User updated successfully')];
-        } else {
-            return ['success' => false, 'message' => t('Failed to update user')];
-        }
-    } catch (Exception $e) {
-        error_log(t('Ошибка в update_user: ') . $e->getMessage());
-        // Возвращаем ошибку, если исключение поймано
-        return ['success' => false, 'message' => t('Error updating user: ') . $e->getMessage()];
+    $email = $data['email'];
+    $name = trim((string)$dataUpdate['name']);
+    $role = strtolower(trim((string)$dataUpdate['role']));
+
+    if ($name === '' || textLength($name) > 100) {
+        return ['success' => false, 'message' => t('Missing required fields')];
+    }
+    if (!in_array($role, User::ROLES, true)) {
+        return ['success' => false, 'message' => t('Invalid data provided')];
+    }
+    // Нельзя разжаловать последнего администратора
+    if ($role !== 'admin' && isLastAdmin($user, $email)) {
+        throw new Exception(t('Cannot remove or demote the last administrator'));
+    }
+
+    // В хранилище уходят ТОЛЬКО email (условие) и name/role (изменения): любые другие поля из запроса игнорируются
+    $updatedCount = $user->updateRecord(['email' => $email], ['name' => $name, 'role' => $role]);
+    if ($updatedCount > 0) {
+        return ['success' => true, 'message' => t('User updated successfully')];
+    } else {
+        return ['success' => false, 'message' => t('Failed to update user')];
     }
 }
 
 // Функция для сброса пароля
 function resetPassword($user)
 {
-    $email = $_POST['email'] ?? '';
-    $newPassword = $_POST['newPassword'] ?? '';
+    $email = trim((string)($_POST['email'] ?? ''));
+    $newPassword = (string)($_POST['newPassword'] ?? '');
 
     if (empty($email) || empty($newPassword)) {
         throw new Exception(t('Email and new password are required'));
+    }
+    if (strlen($newPassword) < 8 || strlen($newPassword) > 72) {
+        throw new Exception(t('Password must be between 8 and 72 characters'));
     }
 
     // Обновляем пароль (метод updateRecord сам хеширует пароль)
@@ -318,11 +395,17 @@ function resetPassword($user)
 // Функция для входа пользователя
 function loginUser($user)
 {
-    $email = $_POST['email'] ?? '';
-    $password = $_POST['password'] ?? '';
+    $email = trim((string)($_POST['email'] ?? ''));
+    $password = (string)($_POST['password'] ?? '');
 
     if (empty($email) || empty($password)) {
         throw new Exception(t('Please fill in all fields'));
+    }
+
+    // Защита от подбора пароля: после серии неудач вход временно закрыт
+    if ($user->isLoginBlocked($email)) {
+        http_response_code(429);
+        throw new Exception(t('Too many login attempts. Try again later.'));
     }
 
     if ($user->login($email, $password)) {
@@ -335,11 +418,17 @@ function loginUser($user)
 // Функция для отправки сообщения
 function sendMessage($storage)
 {
-    $email = $_POST['email'] ?? '';
-    $message = $_POST['message'] ?? '';
+    $email = trim((string)($_POST['email'] ?? ''));
+    $message = trim((string)($_POST['message'] ?? ''));
 
     if (empty($email) || empty($message)) {
         throw new Exception(t('Please fill in all fields'));
+    }
+    if (strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        throw new Exception(t('Invalid email address'));
+    }
+    if (textLength($message) > 1000) { // столько помещается в колонку VARCHAR(1000)
+        throw new Exception(t('Value is too long'));
     }
 
     $data = [
@@ -487,7 +576,7 @@ function updateSettings()
     }
 
     // Запись обновленного содержимого в файл
-    if (file_put_contents($configFile, implode('', $newLines)) === false) {
+    if (file_put_contents($configFile, implode('', $newLines), LOCK_EX) === false) {
         throw new Exception(t('Failed to write config file'));
     }
 
@@ -498,9 +587,10 @@ function updateSettings()
 function getAllUsers($user)
 {
     $users = $user->getAllUsers();
+
     if ($users) {
-        // Преобразуем ассоциативный массив в индексный
-        return ['success' => true, 'users' => array_values($users)];
+        // Преобразуем ассоциативный массив в индексный и убираем хеши паролей
+        return ['success' => true, 'users' => array_values(array_map('publicUserData', $users))];
     } else {
         return ['success' => false, 'message' => t('No users found')];
     }
@@ -733,6 +823,11 @@ function clearCache()
 
     // Удаляем все файлы и поддиректории
     foreach ($items as $item) {
+        // Файлы защиты папки кэша (.htaccess, index.html) не удаляем
+        if (in_array($item->getFilename(), ['.htaccess', 'index.html'], true) &&
+            $item->getPath() === realpath($cacheDir)) {
+            continue;
+        }
         if ($item->isDir()) {
             // Удаляем директорию
             if (!rmdir($item->getRealPath())) {
@@ -762,18 +857,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
 
-        if (!isset($_SESSION['csrf_token']) || $csrfToken !== $_SESSION['csrf_token']) {
-            logMessage('Недействительный CSRF-токен: ' . $csrfToken, 'WARNING');
+        // hash_equals - сравнение за постоянное время (без утечки по времени ответа)
+        if (!isset($_SESSION['csrf_token']) || !is_string($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$csrfToken)) {
+            logMessage('Недействительный CSRF-токен', 'WARNING'); // значение заголовка в журнал не пишем
+            http_response_code(403);
             echo json_encode(['success' => false, 'message' => t('Access denied')]);
             exit;
         }
 
         $action = $_POST['action'] ?? '';
         handleAction($action, $user, $storage);
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
+        logMessage('Ошибка ajax.php: ' . $e->getMessage(), 'ERROR');
         echo json_encode([
             'success' => false,
-            'message' => $e->getMessage()
+            'message' => t('Unknown error occurred')
         ]);
         exit;
     }

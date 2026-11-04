@@ -1,5 +1,18 @@
 <?php
 
+/**
+ * Длина строки в символах. Работает и без расширения mbstring (CMS не должна требовать лишних расширений).
+ */
+function textLength($text): int
+{
+    $text = (string)$text;
+    if (function_exists('mb_strlen')) {
+        return mb_strlen($text, 'UTF-8');
+    }
+    $n = preg_match_all('/./us', $text); // false, если строка - не валидный UTF-8
+    return $n === false ? strlen($text) : $n;
+}
+
 enum RegistrationStatus {
     case SUCCESS_WITH_LOGIN;    // Успешная регистрация и вход
     case SUCCESS_WITHOUT_LOGIN; // Успешная регистрация без входа
@@ -9,8 +22,105 @@ enum RegistrationStatus {
     case UNKNOWN_ERROR;         // Неизвестная ошибка
 }
 
+/**
+ * Ограничение частоты неудачных попыток входа (защита от подбора пароля).
+ * Считает неудачи отдельно для пары "IP + email" и для IP в целом, окно - 15 минут.
+ * Данные хранятся в log/login_throttle.json.
+ * Примечание: если сайт стоит за прокси/CDN, REMOTE_ADDR - это адрес прокси.
+ */
+class LoginThrottle
+{
+    private const WINDOW        = 900; // секунд
+    private const MAX_PER_PAIR  = 5;   // неудач для пары IP + email
+    private const MAX_PER_IP    = 30;  // неудач с одного IP
+
+    private static function file(): string
+    {
+        return BOARD_ROOT . DIRECTORY_SEPARATOR . 'log' . DIRECTORY_SEPARATOR . 'login_throttle.json';
+    }
+
+    private static function keys(string $email): array
+    {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? 'cli';
+        return [
+            'pair' => hash('sha256', 'p|' . $ip . '|' . strtolower(trim($email))),
+            'ip'   => hash('sha256', 'i|' . $ip),
+        ];
+    }
+
+    /** Выполняет $fn(array &$data) под блокировкой файла */
+    private static function withData(callable $fn)
+    {
+        $file = self::file();
+        $dir  = dirname($file);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0750, true);
+        }
+        protectDirectory($dir);
+        $h = @fopen($file, 'c+');
+        if ($h === false) {
+            return null; // не смогли открыть файл - не блокируем вход
+        }
+        try {
+            flock($h, LOCK_EX);
+            $data = json_decode((string)stream_get_contents($h), true);
+            if (!is_array($data)) {
+                $data = [];
+            }
+            // Чистим устаревшие записи
+            $now = time();
+            foreach ($data as $k => $times) {
+                $data[$k] = array_values(array_filter((array)$times, fn($t) => $t > $now - self::WINDOW));
+                if (!$data[$k]) {
+                    unset($data[$k]);
+                }
+            }
+            $result = $fn($data);
+            ftruncate($h, 0);
+            rewind($h);
+            fwrite($h, json_encode($data));
+            return $result;
+        } finally {
+            flock($h, LOCK_UN);
+            fclose($h);
+        }
+    }
+
+    public static function isBlocked(string $email): bool
+    {
+        $k = self::keys($email);
+        return (bool)self::withData(function (array &$d) use ($k) {
+            return count($d[$k['pair']] ?? []) >= self::MAX_PER_PAIR
+                || count($d[$k['ip']] ?? []) >= self::MAX_PER_IP;
+        });
+    }
+
+    public static function registerFailure(string $email): void
+    {
+        $k = self::keys($email);
+        self::withData(function (array &$d) use ($k) {
+            $d[$k['pair']][] = time();
+            $d[$k['ip']][]   = time();
+        });
+    }
+
+    public static function reset(string $email): void
+    {
+        $k = self::keys($email);
+        self::withData(function (array &$d) use ($k) {
+            unset($d[$k['pair']]);
+        });
+    }
+}
+
 class User
 {
+    /** Хеш-пустышка: проверяем пароль и для несуществующего email, чтобы время ответа не выдавало, есть ли такой пользователь */
+    private const DUMMY_HASH = '$2y$10$Bfdn7qskSEpfJHle.EX9kOQVRuQR.qCnRK/9dNcukFqG1ydeANJp6';
+
+    /** Допустимые роли */
+    public const ROLES = ['user', 'admin'];
+
     /** @var BaseTableStorage $storage Хранилище данных (работа с БД) */
     private $storage;
     /** @var string $tableName Название таблицы пользователей в базе данных */
@@ -34,6 +144,8 @@ class User
 
         if (! headers_sent() && session_status() === PHP_SESSION_NONE) {
             ini_set('session.name', $cookieName);
+            ini_set('session.use_strict_mode', '1');  // не принимаем чужие, выдуманные клиентом идентификаторы сессий
+            ini_set('session.use_only_cookies', '1'); // никаких PHPSESSID в адресной строке
             if ($this->sessionLifetime === -1) {
                 $CookieLifetime = 10 * 365 * 24 * 3600; // 10 лет в секундах
             } elseif ($this->sessionLifetime === 0) {
@@ -88,36 +200,54 @@ class User
     public function register(array $userData, bool $autoLogin = true): RegistrationStatus
     {
         try {
-            // Проверяем корректность данных
-            if (empty($userData['email']) || empty($userData['password'])) {
-                logMessage('Некорректные данные: email или пароль отсутствуют', 'ERROR');
+            // Нормализуем и проверяем данные
+            $email    = strtolower(trim((string)($userData['email'] ?? '')));
+            $password = (string)($userData['password'] ?? '');
+            $name     = trim(preg_replace('/[\x00-\x1F\x7F]+/', ' ', (string)($userData['name'] ?? '')));
+            $role     = strtolower(trim((string)($userData['role'] ?? 'user')));
+
+            if ($email === '' || strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL)
+                || strlen($password) < 8 || strlen($password) > 72 // bcrypt учитывает только первые 72 байта
+                || $name === '' || textLength($name) > 100) {
+                logMessage('Некорректные данные регистрации', 'ERROR');
                 return RegistrationStatus::INVALID_DATA;
             }
+            if (!in_array($role, self::ROLES, true)) {
+                $role = 'user';
+            }
 
-            // Проверяем существование email
-            $existing = $this->storage->getRecordsByColumn($this->tableName, 'email', $userData['email'], false);
+            // Проверяем существование email (точное совпадение без учёта регистра)
+            $existing = $this->storage->getRecordsByColumn($this->tableName, 'email', $email, false);
             if (! empty($existing)) {
-                logMessage("Email уже зарегистрирован: " . $userData['email'], 'ERROR');
+                logMessage("Email уже зарегистрирован: " . $email, 'ERROR');
                 return RegistrationStatus::EMAIL_EXISTS;
             }
 
-            // Хешируем пароль
-            $userData['password'] = password_hash($userData['password'], PASSWORD_BCRYPT);
+            // Сохраняем только известные поля, пароль - в виде хеша
+            $record = [
+                'email'    => $email,
+                'password' => password_hash($password, PASSWORD_BCRYPT),
+                'name'     => $name,
+                'role'     => $role,
+            ];
 
-            // Сохраняем пользователя
-            $success = $this->storage->insertRecord($this->tableName, $userData);
+            $success = $this->storage->insertRecord($this->tableName, $record);
             if (! $success) {
-                logMessage('Ошибка при сохранении пользователя в базу данных: ' . $userData['email'], 'ERROR');
+                logMessage('Ошибка при сохранении пользователя в базу данных: ' . $email, 'ERROR');
                 return RegistrationStatus::DATABASE_ERROR;
             }
 
             // Автоматически входим, если $autoLogin = true
             if ($autoLogin) {
-                $this->setSession($userData); // Сохраняем данные в сессию
-                logMessage('Пользователь успешно зарегистрирован и вошел в систему: ' . $userData['email'], 'INFO');
+                // Новый идентификатор сессии при входе (защита от фиксации сессии)
+                if (session_status() === PHP_SESSION_ACTIVE && ! headers_sent()) {
+                    session_regenerate_id(true);
+                }
+                $this->setSession($record); // Сохраняем данные в сессию
+                logMessage('Пользователь успешно зарегистрирован и вошел в систему: ' . $email, 'INFO');
                 return RegistrationStatus::SUCCESS_WITH_LOGIN;
             } else {
-                logMessage('Пользователь успешно зарегистрирован: ' . $userData['email'], 'INFO');
+                logMessage('Пользователь успешно зарегистрирован: ' . $email, 'INFO');
                 return RegistrationStatus::SUCCESS_WITHOUT_LOGIN;
             }
 
@@ -133,39 +263,48 @@ class User
     public function login(string $email, string $password): bool
     {
         try {
-            // Получаем пользователей из базы данных по email
-            $users = $this->storage->getRecordsByColumn($this->tableName, 'email', $email, false);
+            $email = trim($email);
 
-            // Если пользователь с таким email не найден, возвращаем false
-            if (empty($users)) {
-                logMessage('Пользователь с email ' . $email . ' не найден.', 'WARNING');
+            // Слишком много неудачных попыток - не проверяем пароль вообще
+            if (LoginThrottle::isBlocked($email)) {
+                logMessage('Вход временно заблокирован из-за частых неудачных попыток: ' . $email, 'WARNING');
                 return false;
             }
 
-                                   // Берем первого пользователя из массива (предполагаем, что email уникален)
-            $user = reset($users); // Берем первого пользователя из массива
+            // Получаем пользователей из базы данных по email
+            $users = $this->storage->getRecordsByColumn($this->tableName, 'email', $email, false);
+            $user  = empty($users) ? null : reset($users);
 
-            // Проверяем, совпадает ли введенный пароль с хешем пароля из базы данных
-            if (password_verify($password, $user['password'])) {
+            // Пароль проверяем всегда (для несуществующего email - по хешу-пустышке), чтобы не было разницы во времени ответа
+            $hash = (is_array($user) && isset($user['password'])) ? (string)$user['password'] : self::DUMMY_HASH;
+            $ok   = password_verify($password, $hash) && $user !== null;
+
+            if ($ok) {
                 // Регенерируем идентификатор сессии для защиты от фиксации сессии
                 session_regenerate_id(true);
 
                 // Устанавливаем данные пользователя в сессию
                 $this->setSession($user);
-
-                // Логируем успешную авторизацию
-                // logMessage('Пользователь успешно авторизован: ' . $email, 'INFO');
+                LoginThrottle::reset($email);
                 return true;
-            } else {
-                // Логируем попытку ввода неверного пароля
-                logMessage('Неверный пароль для пользователя: ' . $email, 'WARNING');
-                return false;
             }
+
+            LoginThrottle::registerFailure($email);
+            logMessage('Неудачная попытка входа: ' . $email, 'WARNING');
+            return false;
         } catch (Exception $e) {
             // Логируем ошибку
             logMessage('Ошибка при авторизации: ' . $e->getMessage(), 'ERROR');
             return false;
         }
+    }
+
+    /**
+     * Заблокирован ли вход для этой пары IP + email (используется для понятного сообщения в интерфейсе).
+     */
+    public function isLoginBlocked(string $email): bool
+    {
+        return LoginThrottle::isBlocked(trim($email));
     }
 
     /**
@@ -175,6 +314,11 @@ class User
     {
         if (isset($_SESSION[$this->sessionKey])) {
             unset($_SESSION[$this->sessionKey]);
+            // После выхода выдаём новый идентификатор сессии и новый CSRF-токен
+            if (session_status() === PHP_SESSION_ACTIVE && ! headers_sent()) {
+                session_regenerate_id(true);
+            }
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
             // logMessage('Пользователь вышел из системы.', 'INFO');
         } else {
             logMessage('Попытка выхода неавторизованного пользователя.', 'WARNING');
@@ -270,6 +414,26 @@ class User
 
         // Сравниваем роль без учета регистра
         return strtolower($userData['role']) === strtolower($role);
+    }
+
+    /**
+     * Проверяет, что текущий пользователь - администратор, по ДАННЫМ ХРАНИЛИЩА, а не по роли, сохранённой в сессии.
+     * Так удалённый или разжалованный администратор теряет доступ сразу, а не после выхода.
+     * Для действий, меняющих данные, использовать этот метод, а не isCurrentRole().
+     */
+    public function isAdmin(): bool
+    {
+        $current = $_SESSION[$this->sessionKey] ?? null;
+        if (! is_array($current) || empty($current['email']) || strtolower((string)($current['role'] ?? '')) !== 'admin') {
+            return false;
+        }
+        try {
+            $users = $this->storage->getRecordsByColumn($this->tableName, 'email', (string)$current['email'], false);
+        } catch (Exception $e) {
+            return false;
+        }
+        $record = empty($users) ? null : reset($users);
+        return is_array($record) && strtolower((string)($record['role'] ?? '')) === 'admin';
     }
 
     /**
