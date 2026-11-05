@@ -110,6 +110,16 @@ function handleAction($action, $user, $storage)
                 $response = registerUser($user);
                 break;
 
+            // Добавление пользователя из админки (только администратор, роль задаётся в форме)
+            case 'admin_add_user':
+                $response = registerUser($user, true);
+                break;
+
+            // Проверка, что текущий пользователь всё ещё администратор (страница админки опрашивает её)
+            case 'ping':
+                $response = ['success' => true];
+                break;
+
             // Получение данных пользователя
             case 'get_user':
                 $response = getUser($user);
@@ -236,22 +246,32 @@ function isLastAdmin($user, $email)
     return strtolower((string)($only['email'] ?? '')) === strtolower((string)$email);
 }
 
-function registerUser($user)
+function registerUser($user, $adminMode = false)
 {
+    // Публичная регистрация ВСЕГДА создаёт обычного пользователя. Роль принимает только действие
+    // admin_add_user, и только если запрос действительно пришёл от администратора (проверка по хранилищу).
+    if ($adminMode && !$user->isAdmin()) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => t('Access denied')]);
+        exit;
+    }
+
     $email = strtolower(trim((string)($_POST['email'] ?? '')));
     $password = (string)($_POST['password'] ?? '');
     $name = trim((string)($_POST['name'] ?? ''));
     $autoLogin = isset($_POST['autoLogin']) ? filter_var($_POST['autoLogin'], FILTER_VALIDATE_BOOLEAN) : true;
 
-    // Роль может задать ТОЛЬКО администратор (форма "Добавить пользователя" в админке).
-    // Для всех остальных роль всегда 'user': иначе любой посетитель мог бы зарегистрироваться администратором.
+    // Роль может задать ТОЛЬКО администратор через admin_add_user (форма "Добавить пользователя" в админке).
+    // В публичной регистрации роль из запроса игнорируется: иначе любой посетитель мог бы стать администратором.
+    // Первого администратора создаём через create-admin.php (см. README)
     $role = 'user';
-    if ($user->isAdmin()) {
+    if ($adminMode) {
         $requested = strtolower(trim((string)($_POST['role'] ?? 'user')));
         $role = in_array($requested, User::ROLES, true) ? $requested : 'user';
         $autoLogin = false; // администратор не должен "переключаться" на созданного пользователя
+    } elseif ($user->isAdmin()) {
+        $autoLogin = false; // вошедший администратор не должен "переключаться" на нового пользователя
     }
-    // Остальным - всегда 'user'. Первого администратора создаём через create-admin.php (см. README)
 
     if ($email === '' || $password === '' || $name === '') {
         throw new Exception(t('Please fill in all fields'));

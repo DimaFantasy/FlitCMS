@@ -63,7 +63,7 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">{{t('Edit User')}}</h5>
+                <h5 class="modal-title">{{t('Edit User')}} <span class="badge bg-primary ms-2 d-none" id="editUserYou">{{t('You')}}</span></h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
@@ -131,6 +131,7 @@
                         </div>
                         <div class="mb-2">
                             <strong>{{t('Name')}}:</strong> <span class="user-name"></span>
+                            <span class="badge bg-primary ms-2 d-none user-you">{{t('You')}}</span>
                         </div>
                         <div>
                             <strong>{{t('Role')}}:</strong> <span class="user-role"></span>
@@ -181,7 +182,7 @@ async function addUser() {
                 'X-CSRF-TOKEN': csrfToken
             },
             body: new URLSearchParams({
-                action: 'register_user',
+                action: 'admin_add_user',
                 email: formData.email,
                 name: formData.name,
                 password: formData.password,
@@ -230,6 +231,7 @@ async function openEditModal(email) {
             document.getElementById('editUserEmail').value = data.user.email;
             document.getElementById('editUserName').value = data.user.name;
             document.getElementById('editUserRole').value = data.user.role;
+            document.getElementById('editUserYou').classList.toggle('d-none', !isCurrentUser(data.user.email));
             new bootstrap.Modal('#editUserModal').show();
         } else {
             alert(data.message || "{{t('Error loading user data')}}");
@@ -254,6 +256,12 @@ async function saveUser() {
         return;
     }
 
+    // Понижение самого себя: после сохранения доступ к админке пропадет
+    const demotingSelf = isCurrentUser(formData.email) && formData.role.toLowerCase() !== 'admin';
+    if (demotingSelf && !confirm("{{t('You are changing your own role. Admin access will be lost. Continue?')}}")) {
+        return;
+    }
+
     try {
         const response = await fetch('ajax.php', {
             method: 'POST',
@@ -273,6 +281,11 @@ async function saveUser() {
 
         const result = await response.json();
         if (result.success) {
+            if (demotingSelf) {
+                // Прав администратора больше нет, уходим из админки
+                window.location.href = '?page=index.htm';
+                return;
+            }
             // Закрываем модальное окно
             bootstrap.Modal.getInstance('#editUserModal').hide();
 
@@ -370,6 +383,11 @@ async function deleteUser(email) {
     }
 }
 
+// Это пользователь, под которым выполнен вход
+function isCurrentUser(email) {
+    return String(email || '').toLowerCase() === String(window.currentUserEmail || '').toLowerCase();
+}
+
 function renderUsers(users) {
     const usersList = document.getElementById('users-list');
     usersList.innerHTML = ''; // Очистка списка перед добавлением новых данных
@@ -383,6 +401,12 @@ function renderUsers(users) {
         userClone.querySelector('.user-email').textContent = user.email;
         userClone.querySelector('.user-name').textContent = user.name;
         userClone.querySelector('.user-role').textContent = user.role;
+
+        // Отметка «Вы» для текущего пользователя
+        if (isCurrentUser(user.email)) {
+            userClone.querySelector('.user-you').classList.remove('d-none');
+            userClone.querySelector('.card').classList.add('border-primary');
+        }
 
         // Добавление обработчиков событий для кнопок
         userClone.querySelector('.edit-user').onclick = () => openEditModal(user.email);
