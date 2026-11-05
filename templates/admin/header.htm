@@ -10,40 +10,155 @@
     <link rel="icon" type="image/png" href="favicon.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="assets/css/global_styles_0.63.css">
-    <script>
-        window.langCookieName = "{{$cmsConfig['langCookieName']}}"; // Имя куки для языка
-        window.csrfToken = "{{$_SESSION['csrf_token']}}"; // CSRF-токен
-        window.currentUserEmail = {{php echo json_encode((string)($user->getCurrentUser()['email'] ?? ''), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS);}}; // Email текущего пользователя
-    </script>
+    <!-- Должен быть первым скриптом, который перехватывает таймеры, fetch и XHR: до скриптов страниц и Chart.js -->
     <script>
         // Если ajax.php или stats.php отвечают 403 (права администратора пропали, сессия закончилась),
-        // показываем страницу 403 и останавливаем всё, что страница делала в фоне.
+        // показываем страницу 403 и штатно останавливаем всё, что страница делала в фоне.
         // Редиректов нет. Остальные ошибки AJAX (500, success: false и т.д.) обрабатываются кодом страниц как обычно.
         (function () {
-            var shown = false;
-            var origSetTimeout = window.setTimeout;
-            var origFetch = window.fetch;
-            var origOpen = XMLHttpRequest.prototype.open;
-            var origSend = XMLHttpRequest.prototype.send;
+            // Единый флаг: после первого 403 от защищённых адресов становится true и не сбрасывается
+            var accessDenied = false;
 
-            // Адреса, которые отдают 403 при отсутствии прав администратора
+            // Оригинальные функции браузера
+            var nativeSetTimeout = window.setTimeout;
+            var nativeClearTimeout = window.clearTimeout;
+            var nativeSetInterval = window.setInterval;
+            var nativeClearInterval = window.clearInterval;
+            var nativeRaf = window.requestAnimationFrame;
+            var nativeCaf = window.cancelAnimationFrame;
+            var nativeFetch = window.fetch;
+            var nativeOpen = XMLHttpRequest.prototype.open;
+            var nativeSend = XMLHttpRequest.prototype.send;
+            var nativeAbort = XMLHttpRequest.prototype.abort;
+
+            // Реестры того, что сейчас живо и должно быть остановлено при 403
+            var timeouts = new Set();
+            var intervals = new Set();
+            var frames = new Set();
+            var controllers = new Set();
+            var xhrs = new Set();
+
+            // Адреса, которые отдают 403 при отсутствии прав администратора (только свой домен)
             function isGuarded(url) {
-                return /(^|\/)(ajax|stats)\.php(\?|$)/.test(String(url || ''));
+                try {
+                    var u = new URL(String(url || ''), window.location.href);
+                    return u.origin === window.location.origin && /(^|\/)(ajax|stats)\.php$/.test(u.pathname);
+                } catch (e) {
+                    return false;
+                }
             }
 
-            function showForbidden() {
-                if (shown) return;
-                shown = true;
-
-                // Останавливаем все таймеры страницы (опрос монитора, повторные запросы и т.п.)
-                var last = origSetTimeout.call(window, function () {}, 0);
-                for (var i = 0; i <= last; i++) {
-                    clearTimeout(i);
-                    clearInterval(i);
+            function makeAbortError() {
+                try {
+                    return new DOMException('Access denied', 'AbortError');
+                } catch (e) {
+                    var err = new Error('Access denied');
+                    err.name = 'AbortError';
+                    return err;
                 }
-                // Новые таймеры из уже запущенных цепочек (setTimeout внутри finally и т.д.) не стартуют
-                window.setTimeout = function () { return 0; };
-                window.setInterval = function () { return 0; };
+            }
+
+            // ---------- Таймеры: обёртки с реестром идентификаторов ----------
+            window.setTimeout = function (handler, delay) {
+                if (accessDenied) return 0;
+                var args = Array.prototype.slice.call(arguments, 2);
+                var id;
+                var cb = handler;
+                if (typeof handler === 'function') {
+                    cb = function () {
+                        timeouts.delete(id); // сработал - в реестре больше не нужен
+                        if (accessDenied) return;
+                        return handler.apply(this, args);
+                    };
+                }
+                id = nativeSetTimeout.call(window, cb, delay);
+                timeouts.add(id);
+                return id;
+            };
+
+            window.setInterval = function (handler, delay) {
+                if (accessDenied) return 0;
+                var args = Array.prototype.slice.call(arguments, 2);
+                var cb = handler;
+                if (typeof handler === 'function') {
+                    cb = function () {
+                        if (accessDenied) return;
+                        return handler.apply(this, args);
+                    };
+                }
+                var id = nativeSetInterval.call(window, cb, delay);
+                intervals.add(id);
+                return id;
+            };
+
+            // Идентификаторы setTimeout и setInterval в браузере общие, поэтому очищаем в обоих реестрах
+            window.clearTimeout = function (id) {
+                timeouts.delete(id);
+                intervals.delete(id);
+                return nativeClearTimeout.call(window, id);
+            };
+            window.clearInterval = function (id) {
+                timeouts.delete(id);
+                intervals.delete(id);
+                return nativeClearInterval.call(window, id);
+            };
+
+            // requestAnimationFrame (его использует Chart.js для анимации графика)
+            if (nativeRaf && nativeCaf) {
+                window.requestAnimationFrame = function (callback) {
+                    if (accessDenied) return 0;
+                    var id = nativeRaf.call(window, function (ts) {
+                        frames.delete(id);
+                        if (accessDenied) return;
+                        callback(ts);
+                    });
+                    frames.add(id);
+                    return id;
+                };
+                window.cancelAnimationFrame = function (id) {
+                    frames.delete(id);
+                    return nativeCaf.call(window, id);
+                };
+            }
+
+            // ---------- Страница 403 и остановка всего ----------
+            function showForbidden() {
+                // Повторные 403 ничего не перестраивают и не очищают заново
+                if (accessDenied) return;
+                accessDenied = true;
+
+                // Окна alert и confirm больше не показываем (иначе обработчики ошибок страниц будут их выводить)
+                window.alert = function () {};
+                window.confirm = function () { return false; };
+                window.prompt = function () { return null; };
+
+                // Таймеры: штатная очистка по зарегистрированным идентификаторам
+                timeouts.forEach(function (id) { nativeClearTimeout.call(window, id); });
+                intervals.forEach(function (id) { nativeClearInterval.call(window, id); });
+                if (nativeCaf) frames.forEach(function (id) { nativeCaf.call(window, id); });
+                timeouts.clear();
+                intervals.clear();
+                frames.clear();
+
+                // Запросы в полёте: fetch отменяются через AbortController, XHR через abort()
+                controllers.forEach(function (controller) {
+                    try { controller.abort(); } catch (e) {}
+                });
+                controllers.clear();
+                xhrs.forEach(function (xhr) {
+                    try { nativeAbort.call(xhr); } catch (e) {}
+                });
+                xhrs.clear();
+
+                // Закрываем модальные окна Bootstrap (без анимации, чтобы не зависеть от таймеров)
+                try {
+                    if (window.bootstrap && window.bootstrap.Modal) {
+                        document.querySelectorAll('.modal').forEach(function (el) {
+                            var modal = window.bootstrap.Modal.getInstance(el);
+                            if (modal) modal.dispose();
+                        });
+                    }
+                } catch (e) {}
 
                 document.title = '403';
                 document.body.className = '';
@@ -54,43 +169,119 @@
                     '<p><a href="?page=index.htm">{{t("Home Page")}}</a></p></div>';
             }
 
-            window.fetch = function (input) {
+            // ---------- fetch ----------
+            window.fetch = function (input, init) {
                 var url = (input && input.url) ? input.url : input;
-                // После 403 новые запросы к защищенным адресам не отправляются и не завершаются (чтобы не было alert об ошибке)
-                if (shown && isGuarded(url)) return new Promise(function () {});
-                return origFetch.apply(this, arguments).then(function (response) {
-                    if (response.status === 403 && isGuarded(url)) showForbidden();
+                if (!isGuarded(url)) return nativeFetch.apply(window, arguments);
+
+                // После 403 новые защищённые запросы не отправляются и сразу отклоняются как отмена
+                if (accessDenied) return Promise.reject(makeAbortError());
+
+                // Свой AbortController, связанный с signal вызывающего кода (чужой signal не теряем)
+                var controller = new AbortController();
+                var outer = (init && init.signal) || (input && input.signal) || null;
+                var onOuterAbort = function () {
+                    try { controller.abort(outer.reason); } catch (e) { controller.abort(); }
+                };
+                if (outer) {
+                    if (outer.aborted) onOuterAbort();
+                    else outer.addEventListener('abort', onOuterAbort);
+                }
+                controllers.add(controller);
+
+                function cleanup() {
+                    controllers.delete(controller);
+                    if (outer) outer.removeEventListener('abort', onOuterAbort);
+                }
+
+                var newInit = Object.assign({}, init, { signal: controller.signal });
+                var promise;
+                try {
+                    promise = nativeFetch.call(window, input, newInit);
+                } catch (e) {
+                    cleanup();
+                    return Promise.reject(e);
+                }
+                return promise.then(function (response) {
+                    cleanup();
+                    if (response.status === 403) {
+                        showForbidden();
+                        // Сам ответ 403 тоже завершаем как отмену: страница уже заменена,
+                        // и код страниц не должен разбирать этот ответ и трогать исчезнувшие элементы
+                        try { if (response.body) response.body.cancel(); } catch (e) {}
+                        throw makeAbortError();
+                    }
                     return response;
+                }, function (error) {
+                    cleanup();
+                    throw error;
                 });
             };
 
+            // ---------- XMLHttpRequest ----------
             XMLHttpRequest.prototype.open = function (method, url) {
-                this._guardedUrl = url;
-                return origOpen.apply(this, arguments);
-            };
-            XMLHttpRequest.prototype.send = function () {
-                if (shown && isGuarded(this._guardedUrl)) return;
-                this.addEventListener('load', function () {
-                    if (this.status === 403 && isGuarded(this._guardedUrl)) showForbidden();
-                });
-                return origSend.apply(this, arguments);
+                var xhr = this;
+                xhr._guardedUrl = url;
+                if (!xhr._guardHooked) {
+                    xhr._guardHooked = true;
+                    // Слушатели вешаем в open(), то есть раньше onreadystatechange и onload страницы:
+                    // ответ 403 страница не получает, вместо него она увидит abort и loadend
+                    xhr.addEventListener('readystatechange', function (e) {
+                        if (xhr.readyState !== 4 || xhr.status !== 403 || !isGuarded(xhr._guardedUrl)) return;
+                        xhr._denied = true;
+                        xhrs.delete(xhr); // готовый ответ не сбрасываем через abort()
+                        e.stopImmediatePropagation();
+                        showForbidden();
+                    });
+                    xhr.addEventListener('load', function (e) {
+                        if (!xhr._denied) return;
+                        e.stopImmediatePropagation();
+                        try { xhr.dispatchEvent(new ProgressEvent('abort')); } catch (err) {}
+                    });
+                }
+                return nativeOpen.apply(xhr, arguments);
             };
 
-            // Периодическая проверка прав, а также при возврате на вкладку
+            XMLHttpRequest.prototype.send = function () {
+                var xhr = this;
+                if (!isGuarded(xhr._guardedUrl)) return nativeSend.apply(xhr, arguments);
+
+                // После 403 запрос не отправляется. Вручную вызываем обработку abort, чтобы колбэки завершились
+                if (accessDenied) {
+                    try {
+                        xhr.dispatchEvent(new ProgressEvent('abort'));
+                        xhr.dispatchEvent(new ProgressEvent('loadend'));
+                    } catch (e) {}
+                    return;
+                }
+
+                xhrs.add(xhr);
+                xhr.addEventListener('loadend', function () {
+                    xhrs.delete(xhr);
+                });
+                return nativeSend.apply(xhr, arguments);
+            };
+
+            // ---------- Периодическая проверка прав и проверка при возврате на вкладку ----------
             function ping() {
-                if (shown) return;
-                fetch('ajax.php', {
+                if (accessDenied) return;
+                window.fetch('ajax.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.csrfToken },
                     body: 'action=ping'
                 }).catch(function () {});
             }
-            setInterval(ping, 20000);
+            window.setInterval(ping, 20000);
             document.addEventListener('visibilitychange', function () {
                 if (!document.hidden) ping();
             });
             window.addEventListener('focus', ping);
         })();
+    </script>
+    <script>
+        window.langCookieName = "{{$cmsConfig['langCookieName']}}"; // Имя куки для языка
+        window.csrfToken = "{{$_SESSION['csrf_token']}}"; // CSRF-токен
+        window.currentUserEmail = {{php echo json_encode((string)($user->getCurrentUser()['email'] ?? ''), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS);}}; // Email текущего пользователя
     </script>
 </head>
 
