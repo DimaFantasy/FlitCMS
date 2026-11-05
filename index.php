@@ -84,12 +84,18 @@ $currentTplDir = $isAdminRequest
     ? $cmsConfig['tplAdminDir'] // Папка для админки
     : $cmsConfig['tplDir']; // Стандартная папка
 
-// Если пытаются зайти в админ панель а пользователь НЕ администратор, перенаправляем на index.htm
+// Админка для не-администратора: честный 403 Forbidden, без редиректов и подмены страницы
 if (isset($_GET['isAdmin']) && !$isAdminRequest) {
-    $ACTIVE_PAGE = 'index.htm';
-    $currentTplDir = $cmsConfig['tplDir']; // Стандартная папка
-}    
-    
+    http_response_code(403);
+    header('Cache-Control: no-store');
+    header('Content-Type: text/html; charset=UTF-8');
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">'
+        . '<meta name="robots" content="noindex"><title>403</title></head><body style="font-family:sans-serif;text-align:center;margin-top:15vh">'
+        . '<h1>403</h1><p>' . htmlspecialchars(t('Access denied'), ENT_QUOTES, 'UTF-8') . '</p>'
+        . '<p><a href="?page=index.htm">' . htmlspecialchars(t('Home Page'), ENT_QUOTES, 'UTF-8') . '</a></p></body></html>';
+    exit;
+}
+
 // Подключаем шаблонизатор
 Template::getInstance([
     'tplCompress' => $cmsConfig['tplCompress'] ?? false,

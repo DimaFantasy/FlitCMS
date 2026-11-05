@@ -282,8 +282,12 @@ async function saveUser() {
         const result = await response.json();
         if (result.success) {
             if (demotingSelf) {
-                // Прав администратора больше нет, уходим из админки
-                window.location.href = '?page=index.htm';
+                // Прав администратора больше нет: запрос получит 403, и страница покажет 403 (см. header.htm)
+                await fetch('ajax.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': csrfToken },
+                    body: new URLSearchParams({ action: 'ping' })
+                });
                 return;
             }
             // Закрываем модальное окно

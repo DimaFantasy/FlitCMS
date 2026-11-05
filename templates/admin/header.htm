@@ -16,42 +16,69 @@
         window.currentUserEmail = {{php echo json_encode((string)($user->getCurrentUser()['email'] ?? ''), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS);}}; // Email текущего пользователя
     </script>
     <script>
-        // Если права администратора пропали (понижен, удалён, сессия закончилась), сразу уходим из админки
+        // Если ajax.php или stats.php отвечают 403 (права администратора пропали, сессия закончилась),
+        // показываем страницу 403 и останавливаем всё, что страница делала в фоне.
+        // Редиректов нет. Остальные ошибки AJAX (500, success: false и т.д.) обрабатываются кодом страниц как обычно.
         (function () {
-            var leaving = false;
-            function leave() {
-                if (leaving) return;
-                leaving = true;
-                window.location.href = '?page=index.htm';
-            }
-            function isAjax(url) {
-                return String(url || '').indexOf('ajax.php') !== -1;
+            var shown = false;
+            var origSetTimeout = window.setTimeout;
+            var origFetch = window.fetch;
+            var origOpen = XMLHttpRequest.prototype.open;
+            var origSend = XMLHttpRequest.prototype.send;
+
+            // Адреса, которые отдают 403 при отсутствии прав администратора
+            function isGuarded(url) {
+                return /(^|\/)(ajax|stats)\.php(\?|$)/.test(String(url || ''));
             }
 
-            var origFetch = window.fetch;
+            function showForbidden() {
+                if (shown) return;
+                shown = true;
+
+                // Останавливаем все таймеры страницы (опрос монитора, повторные запросы и т.п.)
+                var last = origSetTimeout.call(window, function () {}, 0);
+                for (var i = 0; i <= last; i++) {
+                    clearTimeout(i);
+                    clearInterval(i);
+                }
+                // Новые таймеры из уже запущенных цепочек (setTimeout внутри finally и т.д.) не стартуют
+                window.setTimeout = function () { return 0; };
+                window.setInterval = function () { return 0; };
+
+                document.title = '403';
+                document.body.className = '';
+                document.body.removeAttribute('style');
+                // Старые элементы вместе со своими обработчиками удаляются из DOM
+                document.body.innerHTML = '<div style="font-family:sans-serif;text-align:center;margin-top:15vh">' +
+                    '<h1>403</h1><p>{{t("Access denied")}}</p>' +
+                    '<p><a href="?page=index.htm">{{t("Home Page")}}</a></p></div>';
+            }
+
             window.fetch = function (input) {
                 var url = (input && input.url) ? input.url : input;
+                // После 403 новые запросы к защищенным адресам не отправляются и не завершаются (чтобы не было alert об ошибке)
+                if (shown && isGuarded(url)) return new Promise(function () {});
                 return origFetch.apply(this, arguments).then(function (response) {
-                    if (response.status === 403 && isAjax(url)) leave();
+                    if (response.status === 403 && isGuarded(url)) showForbidden();
                     return response;
                 });
             };
 
-            var origOpen = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function (method, url) {
-                this._adminUrl = url;
+                this._guardedUrl = url;
                 return origOpen.apply(this, arguments);
             };
-            var origSend = XMLHttpRequest.prototype.send;
             XMLHttpRequest.prototype.send = function () {
+                if (shown && isGuarded(this._guardedUrl)) return;
                 this.addEventListener('load', function () {
-                    if (this.status === 403 && isAjax(this._adminUrl)) leave();
+                    if (this.status === 403 && isGuarded(this._guardedUrl)) showForbidden();
                 });
                 return origSend.apply(this, arguments);
             };
 
             // Периодическая проверка прав, а также при возврате на вкладку
             function ping() {
+                if (shown) return;
                 fetch('ajax.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.csrfToken },
